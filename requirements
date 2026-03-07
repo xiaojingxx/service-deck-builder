@@ -1,5 +1,6 @@
 streamlit
 PyMuPDF
+fitz
 gspread
 google-auth
 python-pptx
