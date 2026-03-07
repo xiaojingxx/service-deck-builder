@@ -2,4 +2,5 @@ streamlit
 PyMuPDF
 gspread
 google-auth
+google-auth-oauthlib
 python-pptx
