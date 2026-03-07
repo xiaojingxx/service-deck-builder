@@ -2,6 +2,7 @@ import os
 import base64
 import tempfile
 import subprocess
+import textwrap
 from io import BytesIO
 
 import fitz  # PyMuPDF
@@ -61,6 +62,8 @@ defaults = {
     "uploaded_templates": {},   # name -> bytes
     "selected_template_name": None,
     "reset_editor_pending": False,
+    "use_auto_break": True,
+    "line_width": 28,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -78,6 +81,31 @@ def split_slides(text: str) -> list[list[str]]:
         if lines:
             slides.append(lines)
     return slides
+
+
+def auto_line_break_lyrics(text: str, width: int = 28) -> str:
+    output = []
+
+    for block in text.split("\n"):
+        block = block.strip()
+
+        if not block:
+            output.append("")
+            continue
+
+        wrapped_lines = textwrap.wrap(
+            block,
+            width=width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+
+        if wrapped_lines:
+            output.extend(wrapped_lines)
+        else:
+            output.append("")
+
+    return "\n".join(output)
 
 
 def find_row_by_umh(ws, umh_number: str):
@@ -131,7 +159,6 @@ def set_shape_text(shape, text, font_size_pt=None):
         run = p.add_run()
         run.text = line
 
-        # If None, keep slide master / layout default font size
         if font_size_pt is not None:
             run.font.size = Pt(font_size_pt)
 
@@ -433,7 +460,6 @@ else:
 # =========================
 left_col, right_col = st.columns([1, 1.2])
 
-# define defaults before columns use them
 title_font_size_pt = None
 lyrics_font_size_pt = None
 
@@ -509,86 +535,109 @@ with left_col:
     else:
         st.caption("Using font sizes from the slide master/layout.")
 
-    if st.session_state["loaded_song"] is not None:
-        edit_idx = st.session_state.get("editing_setlist_index")
-        if edit_idx is not None:
-            st.info(f"Editing setlist item #{edit_idx + 1}")
+    st.markdown("---")
+    st.subheader("Song Editor")
 
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            st.text_input("UMH", key="editor_umh")
-        with col2:
-            st.text_input("Title", key="editor_title")
+    edit_idx = st.session_state.get("editing_setlist_index")
+    if edit_idx is not None:
+        st.info(f"Editing setlist item #{edit_idx + 1}")
 
-        editor_text = st.text_area(
-            "Edit lyrics for this service (use blank lines between slides)",
-            height=420,
-            key="editor_text_box"
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.text_input("UMH", key="editor_umh")
+    with col2:
+        st.text_input("Title", key="editor_title")
+
+    use_auto_break = st.checkbox("Apply auto line breaks", key="use_auto_break")
+    line_width = st.slider(
+        "Max characters per line",
+        min_value=15,
+        max_value=50,
+        key="line_width"
+    )
+
+    raw_editor_text = st.text_area(
+        "Edit lyrics for this service (use blank lines between slides)",
+        height=420,
+        key="editor_text_box"
+    )
+
+    processed_text = (
+        auto_line_break_lyrics(raw_editor_text, width=line_width)
+        if use_auto_break else raw_editor_text
+    )
+
+    if use_auto_break:
+        st.caption("Auto-formatted lyrics preview")
+        st.text_area(
+            "Processed lyrics preview",
+            value=processed_text,
+            height=220,
+            disabled=True
         )
 
-        st.session_state["editor_text"] = editor_text
-        current_slides = split_slides(editor_text)
-        st.caption(f"{len(current_slides)} slide(s) for current song")
+    st.session_state["editor_text"] = processed_text
+    current_slides = split_slides(processed_text)
+    st.caption(f"{len(current_slides)} slide(s) for current song")
 
-        allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+    allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
-        button_label = (
-            "Update Song in Setlist"
-            if edit_idx is not None
-            else "Add Song to Setlist"
-        )
+    button_label = (
+        "Update Song in Setlist"
+        if edit_idx is not None
+        else "Add Song to Setlist"
+    )
 
-        if st.button(button_label):
-            if current_slides:
-                item = {
-                    "umh_number": st.session_state.get("editor_umh", "").strip(),
-                    "title": st.session_state.get("editor_title", "").strip(),
-                    "slides": current_slides,
-                }
+    if st.button(button_label):
+        if current_slides:
+            item = {
+                "umh_number": st.session_state.get("editor_umh", "").strip(),
+                "title": st.session_state.get("editor_title", "").strip(),
+                "slides": current_slides,
+            }
 
-                edit_idx = st.session_state.get("editing_setlist_index")
+            edit_idx = st.session_state.get("editing_setlist_index")
 
-                if edit_idx is None:
-                    duplicate_index = next(
-                        (
-                            i for i, s in enumerate(st.session_state["setlist"])
-                            if s["umh_number"] == item["umh_number"]
-                            and s["title"] == item["title"]
-                            and s["slides"] == item["slides"]
-                        ),
-                        None
+            if edit_idx is None:
+                duplicate_index = next(
+                    (
+                        i for i, s in enumerate(st.session_state["setlist"])
+                        if s["umh_number"] == item["umh_number"]
+                        and s["title"] == item["title"]
+                        and s["slides"] == item["slides"]
+                    ),
+                    None
+                )
+
+                if duplicate_index is not None and not allow_duplicates:
+                    st.warning(
+                        f"This song is already in the setlist as item #{duplicate_index + 1}."
                     )
-
-                    if duplicate_index is not None and not allow_duplicates:
-                        st.warning(
-                            f"This song is already in the setlist as item #{duplicate_index + 1}."
-                        )
-                    else:
-                        st.session_state["setlist"].append(item)
-                        st.session_state["ppt_data"] = None
-                        st.session_state["preview_images"] = None
-                        st.success(
-                            f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                        )
-                        st.session_state["reset_editor_pending"] = True
-                        st.rerun()
-
                 else:
-                    st.session_state["setlist"][edit_idx] = item
-                    st.session_state["editing_setlist_index"] = None
+                    st.session_state["setlist"].append(item)
                     st.session_state["ppt_data"] = None
                     st.session_state["preview_images"] = None
                     st.success(
-                        f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                        f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                     )
                     st.session_state["reset_editor_pending"] = True
                     st.rerun()
             else:
-                st.error("No slides to add.")
+                st.session_state["setlist"][edit_idx] = item
+                st.session_state["editing_setlist_index"] = None
+                st.session_state["ppt_data"] = None
+                st.session_state["preview_images"] = None
+                st.success(
+                    f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                )
+                st.session_state["reset_editor_pending"] = True
+                st.rerun()
+        else:
+            st.error("No slides to add.")
 
-        if st.button("Clear Current Editor"):
-            st.session_state["reset_editor_pending"] = True
-            st.rerun()
+    if st.button("Clear Current Editor"):
+        st.session_state["reset_editor_pending"] = True
+        st.rerun()
 
 with right_col:
     st.subheader("Current Setlist")
