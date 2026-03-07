@@ -53,9 +53,15 @@ defaults = {
     "editor_text_box": "",
     "editor_umh": "",
     "editor_title": "",
+
+    "editor_override_title_font_size": False,
+    "editor_override_lyrics_font_size": False,
+    "editor_override_line_spacing": False,
+
     "editor_title_font_size_pt": 28,
     "editor_lyrics_font_size_pt": 32,
     "editor_line_spacing": 1.2,
+
     "loaded_song": None,
     "ppt_data": None,
     "preview_images": None,
@@ -64,6 +70,7 @@ defaults = {
     "uploaded_templates": {},
     "selected_template_name": None,
     "reset_editor_pending": False,
+
     "auto_split_by_lines": True,
     "lines_per_slide": 4,
 }
@@ -182,12 +189,14 @@ def set_shape_text(shape, text, font_size_pt=None, line_spacing=None):
 
         p.alignment = PP_ALIGN.CENTER
 
+        # If None, keep slide master / layout default spacing
         if line_spacing is not None:
             p.line_spacing = line_spacing
 
         run = p.add_run()
         run.text = line
 
+        # If None, keep slide master / layout default font size
         if font_size_pt is not None:
             run.font.size = Pt(font_size_pt)
 
@@ -389,9 +398,15 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_text"] = new_text
     st.session_state["editor_text_box"] = new_text
     st.session_state["editing_setlist_index"] = None
+
+    # New repository-loaded songs default to template values
+    st.session_state["editor_override_title_font_size"] = False
+    st.session_state["editor_override_lyrics_font_size"] = False
+    st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_title_font_size_pt"] = 28
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
 
@@ -417,9 +432,27 @@ def apply_pending_setlist_load():
     st.session_state["editor_text"] = lyrics_text
     st.session_state["editor_text_box"] = lyrics_text
     st.session_state["editing_setlist_index"] = pending
-    st.session_state["editor_title_font_size_pt"] = item.get("title_font_size_pt", 28)
-    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32)
-    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2)
+
+    st.session_state["editor_override_title_font_size"] = item.get(
+        "override_title_font_size", False
+    )
+    st.session_state["editor_override_lyrics_font_size"] = item.get(
+        "override_lyrics_font_size", False
+    )
+    st.session_state["editor_override_line_spacing"] = item.get(
+        "override_line_spacing", False
+    )
+
+    st.session_state["editor_title_font_size_pt"] = (
+        item.get("title_font_size_pt", 28) or 28
+    )
+    st.session_state["editor_lyrics_font_size_pt"] = (
+        item.get("lyrics_font_size_pt", 32) or 32
+    )
+    st.session_state["editor_line_spacing"] = (
+        item.get("line_spacing", 1.2) or 1.2
+    )
+
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
     st.session_state["pending_setlist_load"] = None
@@ -432,9 +465,14 @@ def reset_editor_for_new_song():
     st.session_state["editor_text"] = ""
     st.session_state["editor_text_box"] = ""
     st.session_state["editing_setlist_index"] = None
+
+    st.session_state["editor_override_title_font_size"] = False
+    st.session_state["editor_override_lyrics_font_size"] = False
+    st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_title_font_size_pt"] = 28
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
 
@@ -608,27 +646,48 @@ with left_col:
 
     st.markdown("#### Song Formatting")
 
-    st.slider(
-        "Title font size (pt)",
-        min_value=12,
-        max_value=60,
-        key="editor_title_font_size_pt"
+    st.checkbox(
+        "Override title font size for this song",
+        key="editor_override_title_font_size"
     )
+    if st.session_state["editor_override_title_font_size"]:
+        st.slider(
+            "Title font size (pt)",
+            min_value=12,
+            max_value=60,
+            key="editor_title_font_size_pt"
+        )
+    else:
+        st.caption("Title font size: using template default")
 
-    st.slider(
-        "Lyrics font size (pt)",
-        min_value=12,
-        max_value=60,
-        key="editor_lyrics_font_size_pt"
+    st.checkbox(
+        "Override lyrics font size for this song",
+        key="editor_override_lyrics_font_size"
     )
+    if st.session_state["editor_override_lyrics_font_size"]:
+        st.slider(
+            "Lyrics font size (pt)",
+            min_value=12,
+            max_value=60,
+            key="editor_lyrics_font_size_pt"
+        )
+    else:
+        st.caption("Lyrics font size: using template default")
 
-    st.slider(
-        "Line spacing",
-        min_value=0.8,
-        max_value=2.0,
-        step=0.1,
-        key="editor_line_spacing"
+    st.checkbox(
+        "Override line spacing for this song",
+        key="editor_override_line_spacing"
     )
+    if st.session_state["editor_override_line_spacing"]:
+        st.slider(
+            "Line spacing",
+            min_value=0.8,
+            max_value=2.0,
+            step=0.1,
+            key="editor_line_spacing"
+        )
+    else:
+        st.caption("Line spacing: using template default")
 
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
@@ -644,9 +703,32 @@ with left_col:
                 "umh_number": st.session_state.get("editor_umh", "").strip(),
                 "title": st.session_state.get("editor_title", "").strip(),
                 "slides": current_slides,
-                "title_font_size_pt": st.session_state.get("editor_title_font_size_pt"),
-                "lyrics_font_size_pt": st.session_state.get("editor_lyrics_font_size_pt"),
-                "line_spacing": st.session_state.get("editor_line_spacing"),
+
+                "title_font_size_pt": (
+                    st.session_state.get("editor_title_font_size_pt")
+                    if st.session_state.get("editor_override_title_font_size")
+                    else None
+                ),
+                "lyrics_font_size_pt": (
+                    st.session_state.get("editor_lyrics_font_size_pt")
+                    if st.session_state.get("editor_override_lyrics_font_size")
+                    else None
+                ),
+                "line_spacing": (
+                    st.session_state.get("editor_line_spacing")
+                    if st.session_state.get("editor_override_line_spacing")
+                    else None
+                ),
+
+                "override_title_font_size": st.session_state.get(
+                    "editor_override_title_font_size"
+                ),
+                "override_lyrics_font_size": st.session_state.get(
+                    "editor_override_lyrics_font_size"
+                ),
+                "override_line_spacing": st.session_state.get(
+                    "editor_override_line_spacing"
+                ),
             }
 
             edit_idx = st.session_state.get("editing_setlist_index")
