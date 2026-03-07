@@ -53,6 +53,9 @@ defaults = {
     "editor_text_box": "",
     "editor_umh": "",
     "editor_title": "",
+    "editor_title_font_size_pt": 28,
+    "editor_lyrics_font_size_pt": 32,
+    "editor_line_spacing": 1.2,
     "loaded_song": None,
     "ppt_data": None,
     "preview_images": None,
@@ -74,7 +77,7 @@ for k, v in defaults.items():
 # =========================
 def split_slides(text: str) -> list[list[str]]:
     """
-    Original mode:
+    Manual mode:
     Blank lines separate slides.
     Non-empty lines inside a block become one slide.
     """
@@ -162,7 +165,7 @@ def get_layout_by_name(prs, layout_name):
     return None
 
 
-def set_shape_text(shape, text, font_size_pt=None):
+def set_shape_text(shape, text, font_size_pt=None, line_spacing=None):
     if shape is None or not getattr(shape, "has_text_frame", False):
         return
 
@@ -178,6 +181,9 @@ def set_shape_text(shape, text, font_size_pt=None):
             p = tf.add_paragraph()
 
         p.alignment = PP_ALIGN.CENTER
+
+        if line_spacing is not None:
+            p.line_spacing = line_spacing
 
         run = p.add_run()
         run.text = line
@@ -248,12 +254,7 @@ def validate_template_bytes(template_bytes: bytes):
     return len(errors) == 0, errors, warnings
 
 
-def create_combined_ppt(
-    setlist,
-    template_bytes: bytes,
-    title_font_size_pt=None,
-    lyrics_font_size_pt=None
-):
+def create_combined_ppt(setlist, template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
     first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
@@ -269,6 +270,10 @@ def create_combined_ppt(
         title = str(song["title"]).strip()
         slides = song["slides"]
 
+        title_font_size_pt = song.get("title_font_size_pt")
+        lyrics_font_size_pt = song.get("lyrics_font_size_pt")
+        line_spacing = song.get("line_spacing")
+
         full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
 
         for i, slide_lines in enumerate(slides):
@@ -279,12 +284,27 @@ def create_combined_ppt(
                 title_placeholder = new_slide.shapes.title
                 body_placeholder = get_body_placeholder(new_slide)
 
-                set_shape_text(title_placeholder, full_title, font_size_pt=title_font_size_pt)
-                set_shape_text(body_placeholder, lyrics_text, font_size_pt=lyrics_font_size_pt)
+                set_shape_text(
+                    title_placeholder,
+                    full_title,
+                    font_size_pt=title_font_size_pt,
+                    line_spacing=line_spacing,
+                )
+                set_shape_text(
+                    body_placeholder,
+                    lyrics_text,
+                    font_size_pt=lyrics_font_size_pt,
+                    line_spacing=line_spacing,
+                )
             else:
                 new_slide = prs.slides.add_slide(rest_layout)
                 body_placeholder = get_body_placeholder(new_slide)
-                set_shape_text(body_placeholder, lyrics_text, font_size_pt=lyrics_font_size_pt)
+                set_shape_text(
+                    body_placeholder,
+                    lyrics_text,
+                    font_size_pt=lyrics_font_size_pt,
+                    line_spacing=line_spacing,
+                )
 
     output = BytesIO()
     prs.save(output)
@@ -369,6 +389,9 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_text"] = new_text
     st.session_state["editor_text_box"] = new_text
     st.session_state["editing_setlist_index"] = None
+    st.session_state["editor_title_font_size_pt"] = 28
+    st.session_state["editor_lyrics_font_size_pt"] = 32
+    st.session_state["editor_line_spacing"] = 1.2
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
 
@@ -394,6 +417,9 @@ def apply_pending_setlist_load():
     st.session_state["editor_text"] = lyrics_text
     st.session_state["editor_text_box"] = lyrics_text
     st.session_state["editing_setlist_index"] = pending
+    st.session_state["editor_title_font_size_pt"] = item.get("title_font_size_pt", 28)
+    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32)
+    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2)
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
     st.session_state["pending_setlist_load"] = None
@@ -406,6 +432,9 @@ def reset_editor_for_new_song():
     st.session_state["editor_text"] = ""
     st.session_state["editor_text_box"] = ""
     st.session_state["editing_setlist_index"] = None
+    st.session_state["editor_title_font_size_pt"] = 28
+    st.session_state["editor_lyrics_font_size_pt"] = 32
+    st.session_state["editor_line_spacing"] = 1.2
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
 
@@ -483,9 +512,6 @@ else:
 # =========================
 left_col, right_col = st.columns([1, 1.2])
 
-title_font_size_pt = None
-lyrics_font_size_pt = None
-
 with left_col:
     st.subheader("Load Song")
 
@@ -530,35 +556,6 @@ with left_col:
                 st.info("No matching titles found.")
 
     st.markdown("---")
-    st.subheader("Font Size")
-
-    use_custom_font_size = st.checkbox(
-        "Override slide master font sizes",
-        value=False
-    )
-
-    if use_custom_font_size:
-        st.caption("If unchecked, the deck keeps the font sizes from the slide master/layout.")
-
-        title_font_size_pt = st.slider(
-            "Title font size (pt)",
-            min_value=12,
-            max_value=60,
-            value=28,
-            step=1
-        )
-
-        lyrics_font_size_pt = st.slider(
-            "Lyrics font size (pt)",
-            min_value=12,
-            max_value=60,
-            value=32,
-            step=1
-        )
-    else:
-        st.caption("Using font sizes from the slide master/layout.")
-
-    st.markdown("---")
     st.subheader("Song Editor")
 
     edit_idx = st.session_state.get("editing_setlist_index")
@@ -571,12 +568,14 @@ with left_col:
     with col2:
         st.text_input("Title", key="editor_title")
 
-    auto_split_by_lines = st.checkbox(
+    st.markdown("#### Slide Splitting")
+
+    st.checkbox(
         "Auto split by lines per slide",
         key="auto_split_by_lines"
     )
 
-    lines_per_slide = st.slider(
+    st.slider(
         "Lines per slide",
         min_value=1,
         max_value=8,
@@ -591,14 +590,14 @@ with left_col:
 
     st.session_state["editor_text"] = editor_text
 
-    if auto_split_by_lines:
+    if st.session_state["auto_split_by_lines"]:
         current_slides = split_slides_by_line_count_with_verse_separators(
             editor_text,
-            lines_per_slide=lines_per_slide
+            lines_per_slide=st.session_state["lines_per_slide"]
         )
         st.caption(
             f"{len(current_slides)} slide(s) for current song "
-            f"({lines_per_slide} lines per slide, blank lines kept as verse separators)"
+            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
         )
     else:
         current_slides = split_slides(editor_text)
@@ -606,6 +605,30 @@ with left_col:
             f"{len(current_slides)} slide(s) for current song "
             f"(manual mode: blank lines separate slides)"
         )
+
+    st.markdown("#### Song Formatting")
+
+    st.slider(
+        "Title font size (pt)",
+        min_value=12,
+        max_value=60,
+        key="editor_title_font_size_pt"
+    )
+
+    st.slider(
+        "Lyrics font size (pt)",
+        min_value=12,
+        max_value=60,
+        key="editor_lyrics_font_size_pt"
+    )
+
+    st.slider(
+        "Line spacing",
+        min_value=0.8,
+        max_value=2.0,
+        step=0.1,
+        key="editor_line_spacing"
+    )
 
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
@@ -621,6 +644,9 @@ with left_col:
                 "umh_number": st.session_state.get("editor_umh", "").strip(),
                 "title": st.session_state.get("editor_title", "").strip(),
                 "slides": current_slides,
+                "title_font_size_pt": st.session_state.get("editor_title_font_size_pt"),
+                "lyrics_font_size_pt": st.session_state.get("editor_lyrics_font_size_pt"),
+                "line_spacing": st.session_state.get("editor_line_spacing"),
             }
 
             edit_idx = st.session_state.get("editing_setlist_index")
@@ -761,8 +787,6 @@ with right_col:
                     ppt_data = create_combined_ppt(
                         st.session_state["setlist"],
                         selected_template_bytes,
-                        title_font_size_pt=title_font_size_pt,
-                        lyrics_font_size_pt=lyrics_font_size_pt
                     )
                     preview_images = pptx_to_preview_images(ppt_data)
 
