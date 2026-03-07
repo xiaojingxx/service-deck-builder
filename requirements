@@ -1,5 +1,5 @@
 streamlit
-PyMuPDF==1.24.14
+PyMuPDF
 gspread
 google-auth
 python-pptx
