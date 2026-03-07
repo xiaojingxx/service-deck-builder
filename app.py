@@ -2,7 +2,6 @@ import os
 import base64
 import tempfile
 import subprocess
-import textwrap
 from io import BytesIO
 
 import fitz  # PyMuPDF
@@ -59,11 +58,11 @@ defaults = {
     "preview_images": None,
     "editing_setlist_index": None,
     "pending_setlist_load": None,
-    "uploaded_templates": {},   # name -> bytes
+    "uploaded_templates": {},
     "selected_template_name": None,
     "reset_editor_pending": False,
-    "use_auto_break": True,
-    "line_width": 28,
+    "auto_split_by_lines": True,
+    "lines_per_slide": 4,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -74,38 +73,60 @@ for k, v in defaults.items():
 # HELPERS
 # =========================
 def split_slides(text: str) -> list[list[str]]:
+    """
+    Original mode:
+    Blank lines separate slides.
+    Non-empty lines inside a block become one slide.
+    """
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
+
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
+
     return slides
 
 
-def auto_line_break_lyrics(text: str, width: int = 28) -> str:
-    output = []
+def split_slides_by_line_count_with_verse_separators(
+    text: str,
+    lines_per_slide: int = 4
+) -> list[list[str]]:
+    """
+    Auto mode:
+    - Blank lines act as verse separators.
+    - Each non-empty line is treated as one lyric line.
+    - Each verse is split into chunks of `lines_per_slide`.
+    - Verses do not merge across blank lines.
+    """
+    if lines_per_slide < 1:
+        lines_per_slide = 1
 
-    for block in text.split("\n"):
-        block = block.strip()
+    verses = []
+    current_verse = []
 
-        if not block:
-            output.append("")
-            continue
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
 
-        wrapped_lines = textwrap.wrap(
-            block,
-            width=width,
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
-
-        if wrapped_lines:
-            output.extend(wrapped_lines)
+        if line == "":
+            if current_verse:
+                verses.append(current_verse)
+                current_verse = []
         else:
-            output.append("")
+            current_verse.append(line)
 
-    return "\n".join(output)
+    if current_verse:
+        verses.append(current_verse)
+
+    slides = []
+    for verse in verses:
+        for i in range(0, len(verse), lines_per_slide):
+            chunk = verse[i:i + lines_per_slide]
+            if chunk:
+                slides.append(chunk)
+
+    return slides
 
 
 def find_row_by_umh(ws, umh_number: str):
@@ -120,10 +141,12 @@ def search_titles(ws, keyword: str):
     records = ws.get_all_records()
     keyword = keyword.lower().strip()
     matches = []
+
     for row in records:
         title = str(row.get("Title", "")).strip()
         if keyword and keyword in title.lower():
             matches.append(row)
+
     return matches[:20]
 
 
@@ -548,37 +571,41 @@ with left_col:
     with col2:
         st.text_input("Title", key="editor_title")
 
-    use_auto_break = st.checkbox("Apply auto line breaks", key="use_auto_break")
-    line_width = st.slider(
-        "Max characters per line",
-        min_value=15,
-        max_value=50,
-        key="line_width"
+    auto_split_by_lines = st.checkbox(
+        "Auto split by lines per slide",
+        key="auto_split_by_lines"
     )
 
-    raw_editor_text = st.text_area(
-        "Edit lyrics for this service (use blank lines between slides)",
+    lines_per_slide = st.slider(
+        "Lines per slide",
+        min_value=1,
+        max_value=8,
+        key="lines_per_slide"
+    )
+
+    editor_text = st.text_area(
+        "Edit lyrics for this service (leave blank lines between verses)",
         height=420,
         key="editor_text_box"
     )
 
-    processed_text = (
-        auto_line_break_lyrics(raw_editor_text, width=line_width)
-        if use_auto_break else raw_editor_text
-    )
+    st.session_state["editor_text"] = editor_text
 
-    if use_auto_break:
-        st.caption("Auto-formatted lyrics preview")
-        st.text_area(
-            "Processed lyrics preview",
-            value=processed_text,
-            height=220,
-            disabled=True
+    if auto_split_by_lines:
+        current_slides = split_slides_by_line_count_with_verse_separators(
+            editor_text,
+            lines_per_slide=lines_per_slide
         )
-
-    st.session_state["editor_text"] = processed_text
-    current_slides = split_slides(processed_text)
-    st.caption(f"{len(current_slides)} slide(s) for current song")
+        st.caption(
+            f"{len(current_slides)} slide(s) for current song "
+            f"({lines_per_slide} lines per slide, blank lines kept as verse separators)"
+        )
+    else:
+        current_slides = split_slides(editor_text)
+        st.caption(
+            f"{len(current_slides)} slide(s) for current song "
+            f"(manual mode: blank lines separate slides)"
+        )
 
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
