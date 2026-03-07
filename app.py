@@ -54,10 +54,12 @@ defaults = {
     "editor_umh": "",
     "editor_title": "",
 
+    # per-song formatting override toggles
     "editor_override_title_font_size": False,
     "editor_override_lyrics_font_size": False,
     "editor_override_line_spacing": False,
 
+    # values used only if override is on
     "editor_title_font_size_pt": 28,
     "editor_lyrics_font_size_pt": 32,
     "editor_line_spacing": 1.2,
@@ -71,8 +73,14 @@ defaults = {
     "selected_template_name": None,
     "reset_editor_pending": False,
 
+    # slide split mode
     "auto_split_by_lines": True,
     "lines_per_slide": 4,
+
+    # editable generated slides
+    "current_song_slide_editors": [],
+    "current_song_slide_source_signature": None,
+    "force_rebuild_slide_editors": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -82,7 +90,7 @@ for k, v in defaults.items():
 # =========================
 # HELPERS
 # =========================
-def split_slides(text: str) -> list[list[str]]:
+def split_slides_manual(text: str) -> list[list[str]]:
     """
     Manual mode:
     Blank lines separate slides.
@@ -139,6 +147,56 @@ def split_slides_by_line_count_with_verse_separators(
     return slides
 
 
+def get_generated_slides_from_editor() -> list[list[str]]:
+    editor_text = st.session_state.get("editor_text_box", "")
+
+    if st.session_state["auto_split_by_lines"]:
+        return split_slides_by_line_count_with_verse_separators(
+            editor_text,
+            lines_per_slide=st.session_state["lines_per_slide"],
+        )
+    return split_slides_manual(editor_text)
+
+
+def make_slide_source_signature() -> tuple:
+    return (
+        st.session_state.get("editor_text_box", ""),
+        st.session_state.get("auto_split_by_lines", True),
+        st.session_state.get("lines_per_slide", 4),
+    )
+
+
+def rebuild_current_song_slide_editors():
+    generated_slides = get_generated_slides_from_editor()
+    st.session_state["current_song_slide_editors"] = [
+        "\n".join(slide) for slide in generated_slides
+    ]
+    st.session_state["current_song_slide_source_signature"] = make_slide_source_signature()
+    st.session_state["force_rebuild_slide_editors"] = False
+
+
+def ensure_current_song_slide_editors():
+    signature = make_slide_source_signature()
+
+    need_rebuild = (
+        st.session_state.get("force_rebuild_slide_editors", False)
+        or st.session_state.get("current_song_slide_source_signature") != signature
+        or not isinstance(st.session_state.get("current_song_slide_editors"), list)
+    )
+
+    if need_rebuild:
+        rebuild_current_song_slide_editors()
+
+
+def get_edited_current_slides() -> list[list[str]]:
+    slides = []
+    for slide_text in st.session_state.get("current_song_slide_editors", []):
+        lines = [line.strip() for line in slide_text.splitlines() if line.strip()]
+        if lines:
+            slides.append(lines)
+    return slides
+
+
 def find_row_by_umh(ws, umh_number: str):
     records = ws.get_all_records()
     for row in records:
@@ -189,14 +247,14 @@ def set_shape_text(shape, text, font_size_pt=None, line_spacing=None):
 
         p.alignment = PP_ALIGN.CENTER
 
-        # If None, keep slide master / layout default spacing
+        # Keep template default if None
         if line_spacing is not None:
             p.line_spacing = line_spacing
 
         run = p.add_run()
         run.text = line
 
-        # If None, keep slide master / layout default font size
+        # Keep template default if None
         if font_size_pt is not None:
             run.font.size = Pt(font_size_pt)
 
@@ -384,6 +442,47 @@ def render_scrollable_images(images):
     st.components.v1.html(html, height=780, scrolling=False)
 
 
+def render_current_song_live_preview(slides, title_font_size_pt=None, lyrics_font_size_pt=None, line_spacing=None):
+    title_px = int((title_font_size_pt or 28) * 1.25)
+    lyrics_px = int((lyrics_font_size_pt or 32) * 1.25)
+    line_height = line_spacing if line_spacing is not None else 1.2
+
+    st.markdown("#### Live Preview of This Song")
+
+    for i, slide in enumerate(slides, start=1):
+        slide_text = "<br>".join(slide)
+
+        html = f"""
+        <div style="
+            width:100%;
+            background:#111;
+            color:white;
+            text-align:center;
+            padding:36px 28px;
+            margin:0 0 18px 0;
+            border-radius:10px;
+            border:1px solid #333;
+        ">
+            <div style="
+                font-size:{title_px}px;
+                font-weight:700;
+                margin-bottom:18px;
+            ">
+                {st.session_state.get("editor_title", "").strip() or "Untitled Song"}
+            </div>
+            <div style="
+                font-size:{lyrics_px}px;
+                line-height:{line_height};
+                white-space:normal;
+            ">
+                {slide_text}
+            </div>
+        </div>
+        """
+        st.markdown(f"**Slide {i}**", unsafe_allow_html=False)
+        st.markdown(html, unsafe_allow_html=True)
+
+
 def load_song_into_editor_from_repository(match):
     song = {
         "umh_number": str(match.get("UMH Number", "")).strip(),
@@ -399,7 +498,6 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_text_box"] = new_text
     st.session_state["editing_setlist_index"] = None
 
-    # New repository-loaded songs default to template values
     st.session_state["editor_override_title_font_size"] = False
     st.session_state["editor_override_lyrics_font_size"] = False
     st.session_state["editor_override_line_spacing"] = False
@@ -407,6 +505,7 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
 
+    st.session_state["force_rebuild_slide_editors"] = True
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
 
@@ -433,25 +532,20 @@ def apply_pending_setlist_load():
     st.session_state["editor_text_box"] = lyrics_text
     st.session_state["editing_setlist_index"] = pending
 
-    st.session_state["editor_override_title_font_size"] = item.get(
-        "override_title_font_size", False
-    )
-    st.session_state["editor_override_lyrics_font_size"] = item.get(
-        "override_lyrics_font_size", False
-    )
-    st.session_state["editor_override_line_spacing"] = item.get(
-        "override_line_spacing", False
-    )
+    st.session_state["editor_override_title_font_size"] = item.get("override_title_font_size", False)
+    st.session_state["editor_override_lyrics_font_size"] = item.get("override_lyrics_font_size", False)
+    st.session_state["editor_override_line_spacing"] = item.get("override_line_spacing", False)
 
-    st.session_state["editor_title_font_size_pt"] = (
-        item.get("title_font_size_pt", 28) or 28
-    )
-    st.session_state["editor_lyrics_font_size_pt"] = (
-        item.get("lyrics_font_size_pt", 32) or 32
-    )
-    st.session_state["editor_line_spacing"] = (
-        item.get("line_spacing", 1.2) or 1.2
-    )
+    st.session_state["editor_title_font_size_pt"] = item.get("title_font_size_pt", 28) or 28
+    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32) or 32
+    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2) or 1.2
+
+    # Load saved slide content directly into the slide editors
+    st.session_state["current_song_slide_editors"] = [
+        "\n".join(slide) for slide in item["slides"]
+    ]
+    st.session_state["current_song_slide_source_signature"] = make_slide_source_signature()
+    st.session_state["force_rebuild_slide_editors"] = False
 
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
@@ -472,6 +566,10 @@ def reset_editor_for_new_song():
     st.session_state["editor_title_font_size_pt"] = 28
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+
+    st.session_state["current_song_slide_editors"] = []
+    st.session_state["current_song_slide_source_signature"] = None
+    st.session_state["force_rebuild_slide_editors"] = True
 
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
@@ -622,27 +720,53 @@ with left_col:
 
     editor_text = st.text_area(
         "Edit lyrics for this service (leave blank lines between verses)",
-        height=420,
+        height=320,
         key="editor_text_box"
     )
-
     st.session_state["editor_text"] = editor_text
 
+    col_rebuild_1, col_rebuild_2 = st.columns([1, 1])
+    with col_rebuild_1:
+        if st.button("Rebuild Slide Editors from Lyrics"):
+            st.session_state["force_rebuild_slide_editors"] = True
+            st.rerun()
+    with col_rebuild_2:
+        if st.button("Clear Current Editor"):
+            st.session_state["reset_editor_pending"] = True
+            st.rerun()
+
+    ensure_current_song_slide_editors()
+
+    generated_slides = get_generated_slides_from_editor()
+    edited_current_slides = get_edited_current_slides()
+
     if st.session_state["auto_split_by_lines"]:
-        current_slides = split_slides_by_line_count_with_verse_separators(
-            editor_text,
-            lines_per_slide=st.session_state["lines_per_slide"]
-        )
         st.caption(
-            f"{len(current_slides)} slide(s) for current song "
+            f"{len(generated_slides)} generated slide(s) from lyrics "
             f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
         )
     else:
-        current_slides = split_slides(editor_text)
         st.caption(
-            f"{len(current_slides)} slide(s) for current song "
+            f"{len(generated_slides)} generated slide(s) from lyrics "
             f"(manual mode: blank lines separate slides)"
         )
+
+    st.markdown("#### Edit Generated Slides")
+    st.caption("You can fine-tune each generated slide here before adding it to the setlist.")
+
+    slide_editor_values = []
+    for i, slide_text in enumerate(st.session_state["current_song_slide_editors"]):
+        edited_slide_text = st.text_area(
+            f"Slide {i + 1}",
+            value=slide_text,
+            height=120,
+            key=f"current_song_slide_editor_{i}",
+        )
+        slide_editor_values.append(edited_slide_text)
+
+    st.session_state["current_song_slide_editors"] = slide_editor_values
+    edited_current_slides = get_edited_current_slides()
+    st.caption(f"{len(edited_current_slides)} slide(s) will be saved for this song")
 
     st.markdown("#### Song Formatting")
 
@@ -689,6 +813,29 @@ with left_col:
     else:
         st.caption("Line spacing: using template default")
 
+    preview_title_font_size = (
+        st.session_state["editor_title_font_size_pt"]
+        if st.session_state["editor_override_title_font_size"]
+        else None
+    )
+    preview_lyrics_font_size = (
+        st.session_state["editor_lyrics_font_size_pt"]
+        if st.session_state["editor_override_lyrics_font_size"]
+        else None
+    )
+    preview_line_spacing = (
+        st.session_state["editor_line_spacing"]
+        if st.session_state["editor_override_line_spacing"]
+        else None
+    )
+
+    render_current_song_live_preview(
+        edited_current_slides,
+        title_font_size_pt=preview_title_font_size,
+        lyrics_font_size_pt=preview_lyrics_font_size,
+        line_spacing=preview_line_spacing,
+    )
+
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
     button_label = (
@@ -698,11 +845,11 @@ with left_col:
     )
 
     if st.button(button_label):
-        if current_slides:
+        if edited_current_slides:
             item = {
                 "umh_number": st.session_state.get("editor_umh", "").strip(),
                 "title": st.session_state.get("editor_title", "").strip(),
-                "slides": current_slides,
+                "slides": edited_current_slides,
 
                 "title_font_size_pt": (
                     st.session_state.get("editor_title_font_size_pt")
@@ -720,15 +867,9 @@ with left_col:
                     else None
                 ),
 
-                "override_title_font_size": st.session_state.get(
-                    "editor_override_title_font_size"
-                ),
-                "override_lyrics_font_size": st.session_state.get(
-                    "editor_override_lyrics_font_size"
-                ),
-                "override_line_spacing": st.session_state.get(
-                    "editor_override_line_spacing"
-                ),
+                "override_title_font_size": st.session_state.get("editor_override_title_font_size"),
+                "override_lyrics_font_size": st.session_state.get("editor_override_lyrics_font_size"),
+                "override_line_spacing": st.session_state.get("editor_override_line_spacing"),
             }
 
             edit_idx = st.session_state.get("editing_setlist_index")
@@ -770,10 +911,6 @@ with left_col:
         else:
             st.error("No slides to add.")
 
-    if st.button("Clear Current Editor"):
-        st.session_state["reset_editor_pending"] = True
-        st.rerun()
-
 with right_col:
     st.subheader("Current Setlist")
 
@@ -793,7 +930,7 @@ with right_col:
             )
 
             with col_title:
-                st.markdown(f"**{i+1}. {label} ({total_slides})**")
+                st.markdown(f"**{i + 1}. {label} ({total_slides})**")
 
             with col_edit:
                 if st.button("✏️", key=f"edit_{i}"):
