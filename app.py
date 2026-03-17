@@ -53,15 +53,12 @@ defaults = {
     "editor_text_box": "",
     "editor_umh": "",
     "editor_title": "",
-
     "editor_override_title_font_size": False,
     "editor_override_lyrics_font_size": False,
     "editor_override_line_spacing": False,
-
     "editor_title_font_size_pt": 28,
     "editor_lyrics_font_size_pt": 32,
     "editor_line_spacing": 1.2,
-
     "loaded_song": None,
     "ppt_data": None,
     "preview_images": None,
@@ -70,9 +67,12 @@ defaults = {
     "uploaded_templates": {},
     "selected_template_name": None,
     "reset_editor_pending": False,
-
     "auto_split_by_lines": True,
     "lines_per_slide": 4,
+    "auto_refresh_editor_preview": True,
+    "editor_preview_ppt_data": None,
+    "editor_preview_images": None,
+    "editor_preview_selected_slide": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -82,6 +82,11 @@ for k, v in defaults.items():
 # =========================
 # HELPERS
 # =========================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_sheet_records():
+    return sheet.get_all_records()
+
+
 def split_slides(text: str) -> list[list[str]]:
     """
     Manual mode:
@@ -140,7 +145,7 @@ def split_slides_by_line_count_with_verse_separators(
 
 
 def find_row_by_umh(ws, umh_number: str):
-    records = ws.get_all_records()
+    records = get_sheet_records()
     for row in records:
         if str(row.get("UMH Number", "")).strip() == umh_number.strip():
             return row
@@ -148,7 +153,7 @@ def find_row_by_umh(ws, umh_number: str):
 
 
 def search_titles(ws, keyword: str):
-    records = ws.get_all_records()
+    records = get_sheet_records()
     keyword = keyword.lower().strip()
     matches = []
 
@@ -189,14 +194,12 @@ def set_shape_text(shape, text, font_size_pt=None, line_spacing=None):
 
         p.alignment = PP_ALIGN.CENTER
 
-        # If None, keep slide master / layout default spacing
         if line_spacing is not None:
             p.line_spacing = line_spacing
 
         run = p.add_run()
         run.text = line
 
-        # If None, keep slide master / layout default font size
         if font_size_pt is not None:
             run.font.size = Pt(font_size_pt)
 
@@ -321,12 +324,21 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     return output
 
 
+def create_single_song_ppt(song_item, template_bytes: bytes):
+    return create_combined_ppt([song_item], template_bytes)
+
+
 def pptx_to_preview_images(pptx_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
+        if hasattr(pptx_bytes, "getvalue"):
+            raw_bytes = pptx_bytes.getvalue()
+        else:
+            raw_bytes = pptx_bytes
+
         with open(pptx_path, "wb") as f:
-            f.write(pptx_bytes.getvalue())
+            f.write(raw_bytes)
 
         cmd = [
             SOFFICE_PATH,
@@ -358,13 +370,21 @@ def pptx_to_preview_images(pptx_bytes):
             with open(img_path, "rb") as f:
                 images.append(f.read())
 
+        doc.close()
         return images
 
 
-def render_scrollable_images(images):
-    html = """
+@st.cache_data(show_spinner=False)
+def build_editor_preview_cached(song_item, template_bytes: bytes):
+    ppt_data = create_single_song_ppt(song_item, template_bytes)
+    preview_images = pptx_to_preview_images(ppt_data)
+    return ppt_data.getvalue(), preview_images
+
+
+def render_scrollable_images(images, height=780):
+    html = f"""
     <div style="
-        height: 760px;
+        height: {height}px;
         overflow-y: auto;
         border: 1px solid #ddd;
         padding: 12px;
@@ -381,7 +401,26 @@ def render_scrollable_images(images):
         </div>
         """
     html += "</div>"
-    st.components.v1.html(html, height=780, scrolling=False)
+    st.components.v1.html(html, height=height + 20, scrolling=False)
+
+
+def render_single_preview_image(img_bytes, label=None):
+    if label:
+        st.caption(label)
+    st.image(img_bytes, use_container_width=True)
+
+
+def render_preview_thumbnails(images, selected_index=0):
+    if not images:
+        return
+
+    cols = st.columns(min(4, len(images)))
+    for i, img_bytes in enumerate(images):
+        col = cols[i % len(cols)]
+        with col:
+            is_selected = i == selected_index
+            caption = f"Slide {i + 1}" + (" ✓" if is_selected else "")
+            st.image(img_bytes, caption=caption, use_container_width=True)
 
 
 def load_song_into_editor_from_repository(match):
@@ -399,7 +438,6 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_text_box"] = new_text
     st.session_state["editing_setlist_index"] = None
 
-    # New repository-loaded songs default to template values
     st.session_state["editor_override_title_font_size"] = False
     st.session_state["editor_override_lyrics_font_size"] = False
     st.session_state["editor_override_line_spacing"] = False
@@ -409,6 +447,9 @@ def load_song_into_editor_from_repository(match):
 
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
+    st.session_state["editor_preview_ppt_data"] = None
+    st.session_state["editor_preview_images"] = None
+    st.session_state["editor_preview_selected_slide"] = 0
 
 
 def apply_pending_setlist_load():
@@ -455,6 +496,9 @@ def apply_pending_setlist_load():
 
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
+    st.session_state["editor_preview_ppt_data"] = None
+    st.session_state["editor_preview_images"] = None
+    st.session_state["editor_preview_selected_slide"] = 0
     st.session_state["pending_setlist_load"] = None
 
 
@@ -475,9 +519,11 @@ def reset_editor_for_new_song():
 
     st.session_state["ppt_data"] = None
     st.session_state["preview_images"] = None
+    st.session_state["editor_preview_ppt_data"] = None
+    st.session_state["editor_preview_images"] = None
+    st.session_state["editor_preview_selected_slide"] = 0
 
 
-# Must happen before widgets are created
 apply_pending_setlist_load()
 
 if st.session_state.get("reset_editor_pending"):
@@ -689,6 +735,114 @@ with left_col:
     else:
         st.caption("Line spacing: using template default")
 
+    current_song_item = {
+        "umh_number": st.session_state.get("editor_umh", "").strip(),
+        "title": st.session_state.get("editor_title", "").strip(),
+        "slides": current_slides,
+        "title_font_size_pt": (
+            st.session_state.get("editor_title_font_size_pt")
+            if st.session_state.get("editor_override_title_font_size")
+            else None
+        ),
+        "lyrics_font_size_pt": (
+            st.session_state.get("editor_lyrics_font_size_pt")
+            if st.session_state.get("editor_override_lyrics_font_size")
+            else None
+        ),
+        "line_spacing": (
+            st.session_state.get("editor_line_spacing")
+            if st.session_state.get("editor_override_line_spacing")
+            else None
+        ),
+        "override_title_font_size": st.session_state.get(
+            "editor_override_title_font_size"
+        ),
+        "override_lyrics_font_size": st.session_state.get(
+            "editor_override_lyrics_font_size"
+        ),
+        "override_line_spacing": st.session_state.get(
+            "editor_override_line_spacing"
+        ),
+    }
+
+    st.markdown("---")
+    st.subheader("Live Preview of Current Song")
+
+    st.checkbox(
+        "Auto-refresh live preview",
+        key="auto_refresh_editor_preview"
+    )
+    manual_preview = st.button("Refresh Live Preview")
+
+    should_build_live_preview = (
+        selected_template_bytes is not None
+        and selected_template_ok
+        and bool(current_slides)
+        and (
+            st.session_state["auto_refresh_editor_preview"] or manual_preview
+        )
+    )
+
+    if should_build_live_preview:
+        try:
+            preview_ppt_bytes, preview_images = build_editor_preview_cached(
+                current_song_item,
+                selected_template_bytes,
+            )
+            st.session_state["editor_preview_ppt_data"] = preview_ppt_bytes
+            st.session_state["editor_preview_images"] = preview_images
+
+            max_index = max(len(preview_images) - 1, 0)
+            st.session_state["editor_preview_selected_slide"] = min(
+                st.session_state.get("editor_preview_selected_slide", 0),
+                max_index,
+            )
+        except Exception as e:
+            st.error(f"Live preview failed: {e}")
+
+    if selected_template_bytes is None:
+        st.info("Upload and select a template to preview the current song.")
+    elif not selected_template_ok:
+        st.info("Selected template is invalid, so live preview is unavailable.")
+    elif not current_slides:
+        st.info("Enter lyrics to preview the current song.")
+    elif st.session_state["editor_preview_images"]:
+        preview_images = st.session_state["editor_preview_images"]
+        slide_labels = [f"Slide {i}" for i in range(1, len(preview_images) + 1)]
+        current_index = st.session_state.get("editor_preview_selected_slide", 0)
+        current_label = slide_labels[current_index] if slide_labels else None
+
+        selected_label = st.radio(
+            "Preview slide",
+            slide_labels,
+            index=current_index,
+            horizontal=True,
+            key="editor_preview_slide_radio",
+        )
+        selected_index = slide_labels.index(selected_label)
+        st.session_state["editor_preview_selected_slide"] = selected_index
+
+        render_single_preview_image(
+            preview_images[selected_index],
+            label=f"Showing {selected_label} of {len(preview_images)}",
+        )
+
+        if len(preview_images) > 1:
+            st.markdown("##### Thumbnails")
+            render_preview_thumbnails(preview_images, selected_index=selected_index)
+
+        if st.session_state["editor_preview_ppt_data"] is not None:
+            st.download_button(
+                label="Download Current Song Preview",
+                data=st.session_state["editor_preview_ppt_data"],
+                file_name="current_song_preview.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                key="download_current_song_preview",
+            )
+    else:
+        st.info("Click refresh to build the current-song preview.")
+
+    st.markdown("---")
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
     button_label = (
@@ -699,38 +853,7 @@ with left_col:
 
     if st.button(button_label):
         if current_slides:
-            item = {
-                "umh_number": st.session_state.get("editor_umh", "").strip(),
-                "title": st.session_state.get("editor_title", "").strip(),
-                "slides": current_slides,
-
-                "title_font_size_pt": (
-                    st.session_state.get("editor_title_font_size_pt")
-                    if st.session_state.get("editor_override_title_font_size")
-                    else None
-                ),
-                "lyrics_font_size_pt": (
-                    st.session_state.get("editor_lyrics_font_size_pt")
-                    if st.session_state.get("editor_override_lyrics_font_size")
-                    else None
-                ),
-                "line_spacing": (
-                    st.session_state.get("editor_line_spacing")
-                    if st.session_state.get("editor_override_line_spacing")
-                    else None
-                ),
-
-                "override_title_font_size": st.session_state.get(
-                    "editor_override_title_font_size"
-                ),
-                "override_lyrics_font_size": st.session_state.get(
-                    "editor_override_lyrics_font_size"
-                ),
-                "override_line_spacing": st.session_state.get(
-                    "editor_override_line_spacing"
-                ),
-            }
-
+            item = current_song_item
             edit_idx = st.session_state.get("editing_setlist_index")
 
             if edit_idx is None:
@@ -888,9 +1011,14 @@ with right_col:
             st.rerun()
 
         if st.session_state["ppt_data"] is not None:
+            download_data = (
+                st.session_state["ppt_data"].getvalue()
+                if hasattr(st.session_state["ppt_data"], "getvalue")
+                else st.session_state["ppt_data"]
+            )
             st.download_button(
                 label="Download Service PowerPoint",
-                data=st.session_state["ppt_data"],
+                data=download_data,
                 file_name="service_deck.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
