@@ -765,9 +765,6 @@ with left_col:
         ),
     }
 
-    st.markdown("---")
-    st.subheader("Live Preview of Current Song")
-
     st.checkbox(
         "Auto-refresh live preview",
         key="auto_refresh_editor_preview"
@@ -799,48 +796,6 @@ with left_col:
             )
         except Exception as e:
             st.error(f"Live preview failed: {e}")
-
-    if selected_template_bytes is None:
-        st.info("Upload and select a template to preview the current song.")
-    elif not selected_template_ok:
-        st.info("Selected template is invalid, so live preview is unavailable.")
-    elif not current_slides:
-        st.info("Enter lyrics to preview the current song.")
-    elif st.session_state["editor_preview_images"]:
-        preview_images = st.session_state["editor_preview_images"]
-        slide_labels = [f"Slide {i}" for i in range(1, len(preview_images) + 1)]
-        current_index = st.session_state.get("editor_preview_selected_slide", 0)
-        current_label = slide_labels[current_index] if slide_labels else None
-
-        selected_label = st.radio(
-            "Preview slide",
-            slide_labels,
-            index=current_index,
-            horizontal=True,
-            key="editor_preview_slide_radio",
-        )
-        selected_index = slide_labels.index(selected_label)
-        st.session_state["editor_preview_selected_slide"] = selected_index
-
-        render_single_preview_image(
-            preview_images[selected_index],
-            label=f"Showing {selected_label} of {len(preview_images)}",
-        )
-
-        if len(preview_images) > 1:
-            st.markdown("##### Thumbnails")
-            render_preview_thumbnails(preview_images, selected_index=selected_index)
-
-        if st.session_state["editor_preview_ppt_data"] is not None:
-            st.download_button(
-                label="Download Current Song Preview",
-                data=st.session_state["editor_preview_ppt_data"],
-                file_name="current_song_preview.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                key="download_current_song_preview",
-            )
-    else:
-        st.info("Click refresh to build the current-song preview.")
 
     st.markdown("---")
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
@@ -898,6 +853,48 @@ with left_col:
         st.rerun()
 
 with right_col:
+    st.subheader("Live Preview of Current Song")
+
+    if selected_template_bytes is None:
+        st.info("Upload and select a template to preview the current song.")
+    elif not selected_template_ok:
+        st.info("Selected template is invalid, so live preview is unavailable.")
+    elif not current_slides:
+        st.info("Enter lyrics to preview the current song.")
+    elif st.session_state["editor_preview_images"]:
+        preview_images = st.session_state["editor_preview_images"]
+        slide_labels = [f"Slide {i}" for i in range(1, len(preview_images) + 1)]
+        current_index = min(
+            st.session_state.get("editor_preview_selected_slide", 0),
+            max(len(preview_images) - 1, 0),
+        )
+
+        selected_label = st.selectbox(
+            "Preview slide",
+            slide_labels,
+            index=current_index,
+            key="editor_preview_slide_select",
+        )
+        selected_index = slide_labels.index(selected_label)
+        st.session_state["editor_preview_selected_slide"] = selected_index
+
+        render_single_preview_image(
+            preview_images[selected_index],
+            label=f"Showing {selected_label} of {len(preview_images)}",
+        )
+
+        if st.session_state["editor_preview_ppt_data"] is not None:
+            st.download_button(
+                label="Download Current Song Preview",
+                data=st.session_state["editor_preview_ppt_data"],
+                file_name="current_song_preview.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                key="download_current_song_preview",
+            )
+    else:
+        st.info("Click refresh to build the current-song preview.")
+
+    st.markdown("---")
     st.subheader("Current Setlist")
 
     if st.session_state["setlist"]:
