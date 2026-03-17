@@ -1,0 +1,10 @@
+
+.DS_Store
+.ipynb_checkpoints/
+service_account.json
+.streamlit/secrets.toml
+node_modules/
+dist/
+venv/
+__pycache__/
+*.pyc
