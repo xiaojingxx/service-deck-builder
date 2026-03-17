@@ -71,6 +71,8 @@ defaults = {
     "editor_preview_ppt_data": None,
     "editor_preview_images": None,
     "focused_preview_slide": 1,
+    "refresh_on_new_line": False,
+    "last_editor_text": "",
 }
 for key, value in defaults.items():
     if key not in st.session_state:
@@ -630,6 +632,7 @@ st.markdown("#### Slide Splitting")
 st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
 st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
 st.checkbox("Auto preview", key="auto_refresh_editor_preview")
+st.checkbox("Refresh on new line", key="refresh_on_new_line")
 
 # Use current editor text to derive slides for focus selector and preview generation
 current_text_for_layout = st.session_state.get("editor_text_box", "")
@@ -671,6 +674,14 @@ with editor_col:
             f"(manual mode: blank lines separate slides)"
         )
 
+old_text = st.session_state.get("last_editor_text", "")
+new_text = editor_text
+refresh_on_enter = (
+    st.session_state.get("refresh_on_new_line")
+    and new_text.count("\n") > old_text.count("\n")
+)
+st.session_state["last_editor_text"] = new_text
+
 current_song_item = {
     "umh_number": st.session_state.get("editor_umh", "").strip(),
     "title": st.session_state.get("editor_title", "").strip(),
@@ -696,7 +707,7 @@ current_song_item = {
 }
 
 if (
-    st.session_state.get("auto_refresh_editor_preview")
+    (st.session_state.get("auto_refresh_editor_preview") or refresh_on_enter)
     and selected_template_bytes is not None
     and selected_template_ok
     and current_slides
