@@ -70,6 +70,9 @@ defaults = {
     "auto_refresh_editor_preview": True,
     "editor_preview_ppt_data": None,
     "editor_preview_images": None,
+    "editor_slide_blocks": [],
+    "focused_edit_slide": 1,
+    "sync_blocks_from_raw": True,
 }
 for key, value in defaults.items():
     if key not in st.session_state:
@@ -106,27 +109,17 @@ def search_titles(keyword: str):
 # SLIDE SPLITTING
 # =========================
 def split_slides_manual(text: str) -> list[list[str]]:
-    """
-    Blank lines separate slides.
-    Non-empty lines inside a block form one slide.
-    """
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
-
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
-
     return slides
 
 
 
 def split_slides_auto(text: str, lines_per_slide: int = 4) -> list[list[str]]:
-    """
-    Blank lines act as verse separators.
-    Each verse is split into chunks of lines_per_slide.
-    """
     if lines_per_slide < 1:
         lines_per_slide = 1
 
@@ -320,7 +313,6 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 def pptx_to_preview_images(pptx_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
-
         raw_bytes = pptx_bytes.getvalue() if hasattr(pptx_bytes, "getvalue") else pptx_bytes
 
         with open(pptx_path, "wb") as f:
@@ -367,34 +359,81 @@ def build_editor_preview_cached(song_item, template_bytes: bytes):
 
 
 
-def render_scrollable_images(images, height=780):
+def render_scrollable_images(images, height=780, focus_index=None):
     html = f"""
-    <div style="
+    <div id="preview-container" style="
         height: {height}px;
         overflow-y: auto;
         border: 1px solid #ddd;
         padding: 12px;
         border-radius: 8px;
         background: #fafafa;
+        scroll-behavior: smooth;
     ">
     """
 
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
+        border = "2px solid #4a90e2" if focus_index == i else "1px solid #ccc"
         html += f"""
-        <div style="margin-bottom: 24px;">
+        <div id="slide-{i}" style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
-            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc;" />
+            <img src="data:image/png;base64,{b64}" style="width: 100%; border: {border};" />
         </div>
         """
 
     html += "</div>"
+
+    if focus_index is not None:
+        html += f"""
+        <script>
+            const container = document.getElementById("preview-container");
+            const target = document.getElementById("slide-{focus_index}");
+            if (container && target) {{
+                container.scrollTop = target.offsetTop - 10;
+            }}
+        </script>
+        """
+
     st.components.v1.html(html, height=height + 20, scrolling=False)
 
 
 # =========================
 # EDITOR STATE HELPERS
 # =========================
+def slides_to_block_texts(slides: list[list[str]]) -> list[str]:
+    return ["\n".join(slide) for slide in slides if slide]
+
+
+
+def block_texts_to_slides(blocks: list[str]) -> list[list[str]]:
+    slides = []
+    for block in blocks:
+        if block.strip():
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if lines:
+                slides.append(lines)
+    return slides
+
+
+
+def sync_editor_blocks_from_raw_text(raw_text: str):
+    if st.session_state["auto_split_by_lines"]:
+        slides = split_slides_auto(raw_text, st.session_state["lines_per_slide"])
+    else:
+        slides = split_slides_manual(raw_text)
+
+    st.session_state["editor_slide_blocks"] = slides_to_block_texts(slides)
+    if slides:
+        st.session_state["focused_edit_slide"] = min(
+            st.session_state.get("focused_edit_slide", 1),
+            len(slides),
+        )
+    else:
+        st.session_state["focused_edit_slide"] = 1
+
+
+
 def load_song_into_editor_from_repository(match):
     song = {
         "umh_number": str(match.get("UMH Number", "")).strip(),
@@ -421,6 +460,7 @@ def load_song_into_editor_from_repository(match):
     st.session_state["preview_images"] = None
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
+    sync_editor_blocks_from_raw_text(new_text)
 
 
 
@@ -459,6 +499,8 @@ def apply_pending_setlist_load():
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
     st.session_state["pending_setlist_load"] = None
+    st.session_state["editor_slide_blocks"] = slides_to_block_texts(item["slides"])
+    st.session_state["focused_edit_slide"] = 1
 
 
 
@@ -481,6 +523,8 @@ def reset_editor_for_new_song():
     st.session_state["preview_images"] = None
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
+    st.session_state["editor_slide_blocks"] = []
+    st.session_state["focused_edit_slide"] = 1
 
 
 apply_pending_setlist_load()
@@ -607,32 +651,76 @@ with left_col:
     with col2:
         st.text_input("Title", key="editor_title")
 
-    st.markdown("#### Slide Splitting")
+    st.markdown("#### Raw Lyrics")
     st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
     st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
 
     editor_text = st.text_area(
-        "Edit lyrics for this service (leave blank lines between verses)",
-        height=420,
+        "Paste or edit raw lyrics here",
+        height=220,
         key="editor_text_box",
     )
     st.session_state["editor_text"] = editor_text
 
-    if st.session_state["auto_split_by_lines"]:
-        current_slides = split_slides_auto(
-            editor_text,
-            lines_per_slide=st.session_state["lines_per_slide"],
+    col_sync_1, col_sync_2 = st.columns(2)
+    if col_sync_1.button("Split Raw Lyrics into Slides"):
+        sync_editor_blocks_from_raw_text(editor_text)
+        st.session_state["editor_preview_ppt_data"] = None
+        st.session_state["editor_preview_images"] = None
+        st.rerun()
+
+    st.checkbox("Auto-sync slide blocks from raw lyrics", key="sync_blocks_from_raw")
+    if st.session_state["sync_blocks_from_raw"]:
+        sync_editor_blocks_from_raw_text(editor_text)
+
+    st.markdown("#### Slide Blocks Editor")
+
+    block_count = len(st.session_state["editor_slide_blocks"])
+    if block_count == 0:
+        st.info("No slide blocks yet. Paste lyrics and click 'Split Raw Lyrics into Slides'.")
+
+    if block_count > 0:
+        st.selectbox(
+            "Focus preview on slide while editing",
+            options=list(range(1, block_count + 1)),
+            key="focused_edit_slide",
         )
-        st.caption(
-            f"{len(current_slides)} slide(s) for current song "
-            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
-        )
-    else:
-        current_slides = split_slides_manual(editor_text)
-        st.caption(
-            f"{len(current_slides)} slide(s) for current song "
-            f"(manual mode: blank lines separate slides)"
-        )
+
+        updated_blocks = []
+        for i, block in enumerate(st.session_state["editor_slide_blocks"], start=1):
+            st.markdown(f"**Slide {i}**")
+            block_value = st.text_area(
+                f"Slide {i} text",
+                value=block,
+                height=110,
+                key=f"slide_block_{i}",
+                label_visibility="collapsed",
+            )
+            updated_blocks.append(block_value)
+
+        st.session_state["editor_slide_blocks"] = updated_blocks
+
+        col_blocks_1, col_blocks_2 = st.columns(2)
+        if col_blocks_1.button("Add Empty Slide"):
+            st.session_state["editor_slide_blocks"].append("")
+            st.session_state["focused_edit_slide"] = len(st.session_state["editor_slide_blocks"])
+            st.session_state["editor_preview_ppt_data"] = None
+            st.session_state["editor_preview_images"] = None
+            st.rerun()
+
+        if col_blocks_2.button("Remove Last Slide"):
+            if st.session_state["editor_slide_blocks"]:
+                st.session_state["editor_slide_blocks"].pop()
+                st.session_state["focused_edit_slide"] = max(
+                    1,
+                    min(st.session_state["focused_edit_slide"], len(st.session_state["editor_slide_blocks"]) or 1),
+                )
+                st.session_state["editor_preview_ppt_data"] = None
+                st.session_state["editor_preview_images"] = None
+                st.rerun()
+
+    current_slides = block_texts_to_slides(st.session_state["editor_slide_blocks"])
+    st.caption(f"{len(current_slides)} editable slide(s) in current song")
 
     st.markdown("#### Song Formatting")
 
@@ -701,7 +789,6 @@ with left_col:
 
     st.markdown("---")
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
-
     button_label = "Update Song in Setlist" if edit_idx is not None else "Add Song to Setlist"
 
     if st.button(button_label):
@@ -719,7 +806,6 @@ with left_col:
                     ),
                     None,
                 )
-
                 if duplicate_index is not None and not allow_duplicates:
                     st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                 else:
@@ -777,13 +863,11 @@ with right_col:
                     )
                     st.session_state["ppt_data"] = None
                     st.session_state["preview_images"] = None
-
                     current_edit = st.session_state.get("editing_setlist_index")
                     if current_edit == i:
                         st.session_state["editing_setlist_index"] = i - 1
                     elif current_edit == i - 1:
                         st.session_state["editing_setlist_index"] = i
-
                     st.rerun()
             with col_down:
                 if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
@@ -793,13 +877,11 @@ with right_col:
                     )
                     st.session_state["ppt_data"] = None
                     st.session_state["preview_images"] = None
-
                     current_edit = st.session_state.get("editing_setlist_index")
                     if current_edit == i:
                         st.session_state["editing_setlist_index"] = i + 1
                     elif current_edit == i + 1:
                         st.session_state["editing_setlist_index"] = i
-
                     st.rerun()
             with col_delete:
                 if st.button("🗑", key=f"delete_{i}"):
@@ -821,7 +903,6 @@ with right_col:
                 st.session_state["pending_setlist_load"] = None
             elif pending is not None and pending > remove_index:
                 st.session_state["pending_setlist_load"] = pending - 1
-
             st.rerun()
 
         col1, col2 = st.columns(2)
@@ -876,11 +957,13 @@ with right_col:
     elif not selected_template_ok:
         st.info("Selected template is invalid, so live preview is unavailable.")
     elif not current_slides:
-        st.info("Enter lyrics to preview the current song.")
+        st.info("Create at least one slide block to preview the current song.")
     elif st.session_state["editor_preview_images"]:
         preview_images = st.session_state["editor_preview_images"]
-        st.caption(f"{len(preview_images)} slide(s)")
-        render_scrollable_images(preview_images, height=600)
+        focus_index = st.session_state.get("focused_edit_slide", 1)
+        focus_index = min(max(focus_index, 1), len(preview_images))
+        st.caption(f"{len(preview_images)} slide(s) — focused on slide {focus_index}")
+        render_scrollable_images(preview_images, height=600, focus_index=focus_index)
 
         if st.session_state["editor_preview_ppt_data"] is not None:
             st.download_button(
