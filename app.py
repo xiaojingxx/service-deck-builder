@@ -566,9 +566,6 @@ else:
 # =========================
 # MAIN LAYOUT
 # =========================
-# =========================
-# MAIN LAYOUT (SINGLE COLUMN)
-# =========================
 
 st.subheader("Current Setlist")
 
@@ -623,17 +620,20 @@ else:
 st.markdown("---")
 st.subheader("Song Editor")
 
-col1, col2 = st.columns([1, 3])
-with col1:
+meta_col1, meta_col2 = st.columns([1, 3])
+with meta_col1:
     st.text_input("UMH", key="editor_umh")
-with col2:
+with meta_col2:
     st.text_input("Title", key="editor_title")
 
 st.markdown("#### Slide Splitting")
 st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
 st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
+st.checkbox("Auto preview", key="auto_refresh_editor_preview")
 
-current_slides = get_current_slides_from_raw_text(st.session_state.get("editor_text_box", ""))
+# Use current editor text to derive slides for focus selector and preview generation
+current_text_for_layout = st.session_state.get("editor_text_box", "")
+current_slides = get_current_slides_from_raw_text(current_text_for_layout)
 slide_count = len(current_slides)
 
 if slide_count > 0:
@@ -642,23 +642,175 @@ if slide_count > 0:
         options=list(range(1, slide_count + 1)),
         key="focused_preview_slide",
     )
+else:
+    st.session_state["focused_preview_slide"] = 1
 
-editor_col, preview_col = st.columns([1, 1.3])
+editor_col, preview_col = st.columns([1, 1.35])
 
 with editor_col:
+    st.markdown("#### Raw Lyrics")
     editor_text = st.text_area(
         "Edit lyrics",
-        height=720,
+        height=760,
         key="editor_text_box",
         label_visibility="collapsed",
     )
     st.session_state["editor_text"] = editor_text
 
+    current_slides = get_current_slides_from_raw_text(editor_text)
+    slide_count = len(current_slides)
+
+    if st.session_state["auto_split_by_lines"]:
+        st.caption(
+            f"{slide_count} slide(s) for current song "
+            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
+        )
+    else:
+        st.caption(
+            f"{slide_count} slide(s) for current song "
+            f"(manual mode: blank lines separate slides)"
+        )
+
+current_song_item = {
+    "umh_number": st.session_state.get("editor_umh", "").strip(),
+    "title": st.session_state.get("editor_title", "").strip(),
+    "slides": current_slides,
+    "title_font_size_pt": (
+        st.session_state.get("editor_title_font_size_pt")
+        if st.session_state.get("editor_override_title_font_size")
+        else None
+    ),
+    "lyrics_font_size_pt": (
+        st.session_state.get("editor_lyrics_font_size_pt")
+        if st.session_state.get("editor_override_lyrics_font_size")
+        else None
+    ),
+    "line_spacing": (
+        st.session_state.get("editor_line_spacing")
+        if st.session_state.get("editor_override_line_spacing")
+        else None
+    ),
+    "override_title_font_size": st.session_state.get("editor_override_title_font_size"),
+    "override_lyrics_font_size": st.session_state.get("editor_override_lyrics_font_size"),
+    "override_line_spacing": st.session_state.get("editor_override_line_spacing"),
+}
+
+if (
+    st.session_state.get("auto_refresh_editor_preview")
+    and selected_template_bytes is not None
+    and selected_template_ok
+    and current_slides
+):
+    try:
+        preview_ppt_bytes, preview_images = build_editor_preview_cached(
+            current_song_item,
+            selected_template_bytes,
+        )
+        st.session_state["editor_preview_ppt_data"] = preview_ppt_bytes
+        st.session_state["editor_preview_images"] = preview_images
+    except Exception as e:
+        st.error(f"Live preview failed: {e}")
+elif not current_slides:
+    st.session_state["editor_preview_ppt_data"] = None
+    st.session_state["editor_preview_images"] = None
+
 with preview_col:
     st.markdown("#### Live Preview")
-    if st.session_state.get("editor_preview_images"):
+    if selected_template_bytes is None:
+        st.info("Upload and select a template to preview the current song.")
+    elif not selected_template_ok:
+        st.info("Selected template is invalid, so live preview is unavailable.")
+    elif st.session_state.get("editor_preview_images"):
         preview_images = st.session_state["editor_preview_images"]
         focus_index = min(max(st.session_state.get("focused_preview_slide", 1), 1), len(preview_images))
-        render_scrollable_images(preview_images, height=800, focus_index=focus_index)
+        render_scrollable_images(preview_images, height=840, focus_index=focus_index)
+        if st.session_state.get("editor_preview_ppt_data") is not None:
+            st.download_button(
+                label="Download Current Song Preview",
+                data=st.session_state["editor_preview_ppt_data"],
+                file_name="current_song_preview.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                key="download_current_song_preview",
+            )
     else:
         st.info("Preview not generated yet.")
+
+st.markdown("#### Song Formatting")
+
+st.checkbox("Override title font size for this song", key="editor_override_title_font_size")
+if st.session_state["editor_override_title_font_size"]:
+    st.slider("Title font size (pt)", min_value=12, max_value=60, key="editor_title_font_size_pt")
+else:
+    st.caption("Title font size: using template default")
+
+st.checkbox("Override lyrics font size for this song", key="editor_override_lyrics_font_size")
+if st.session_state["editor_override_lyrics_font_size"]:
+    st.slider("Lyrics font size (pt)", min_value=12, max_value=60, key="editor_lyrics_font_size_pt")
+else:
+    st.caption("Lyrics font size: using template default")
+
+st.checkbox("Override line spacing for this song", key="editor_override_line_spacing")
+if st.session_state["editor_override_line_spacing"]:
+    st.slider("Line spacing", min_value=0.8, max_value=2.0, step=0.1, key="editor_line_spacing")
+else:
+    st.caption("Line spacing: using template default")
+
+if st.button("Refresh Live Preview"):
+    if selected_template_bytes is not None and selected_template_ok and current_slides:
+        try:
+            preview_ppt_bytes, preview_images = build_editor_preview_cached(
+                current_song_item,
+                selected_template_bytes,
+            )
+            st.session_state["editor_preview_ppt_data"] = preview_ppt_bytes
+            st.session_state["editor_preview_images"] = preview_images
+            st.rerun()
+        except Exception as e:
+            st.error(f"Live preview failed: {e}")
+
+st.markdown("---")
+allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+button_label = "Update Song in Setlist" if st.session_state.get("editing_setlist_index") is not None else "Add Song to Setlist"
+
+if st.button(button_label):
+    if current_slides:
+        item = current_song_item
+        edit_idx = st.session_state.get("editing_setlist_index")
+
+        if edit_idx is None:
+            duplicate_index = next(
+                (
+                    i for i, s in enumerate(st.session_state["setlist"])
+                    if s["umh_number"] == item["umh_number"]
+                    and s["title"] == item["title"]
+                    and s["slides"] == item["slides"]
+                ),
+                None,
+            )
+            if duplicate_index is not None and not allow_duplicates:
+                st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
+            else:
+                st.session_state["setlist"].append(item)
+                st.session_state["ppt_data"] = None
+                st.session_state["preview_images"] = None
+                st.success(
+                    f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                )
+                st.session_state["reset_editor_pending"] = True
+                st.rerun()
+        else:
+            st.session_state["setlist"][edit_idx] = item
+            st.session_state["editing_setlist_index"] = None
+            st.session_state["ppt_data"] = None
+            st.session_state["preview_images"] = None
+            st.success(
+                f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+            )
+            st.session_state["reset_editor_pending"] = True
+            st.rerun()
+    else:
+        st.error("No slides to add.")
+
+if st.button("Clear Current Editor"):
+    st.session_state["reset_editor_pending"] = True
+    st.rerun()
