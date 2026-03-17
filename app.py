@@ -569,6 +569,16 @@ else:
 main_left, main_right = st.columns([1, 1.2])
 
 with main_left:
+    st.subheader("Current Setlist")
+
+    if st.session_state["setlist"]:
+        for i, song in enumerate(st.session_state["setlist"]):
+            label = f'UMH {song["umh_number"]} {song["title"]}' if song["umh_number"] else song["title"]
+            st.markdown(f"**{i + 1}. {label} ({len(song['slides'])})**")
+    else:
+        st.info("No songs added yet.")
+
+    st.markdown("---")
     st.subheader("Load Song")
 
     if st.button("Start New Song"):
