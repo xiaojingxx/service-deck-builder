@@ -977,9 +977,9 @@ with right_col:
 
     st.markdown("---")
     st.subheader("PowerPoint Preview")
-        if st.session_state["preview_images"]:
-            render_scrollable_images(st.session_state["preview_images"])
-        else:
-            st.info("Generate the service preview to see the slide images.")
+    if st.session_state["preview_images"]:
+        render_scrollable_images(st.session_state["preview_images"])
+    else:
+        st.info("Generate the service preview to see the slide images.")
     else:
         st.info("No songs added yet.")
