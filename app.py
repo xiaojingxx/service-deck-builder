@@ -637,13 +637,13 @@ with main_left:
     else:
         st.session_state["focused_preview_slide"] = 1
 
-    editor_col, preview_col = st.columns([1, 1])
+    editor_col, preview_col = st.columns([1, 1.25])
 
     with editor_col:
         st.markdown("#### Raw Lyrics")
         editor_text = st.text_area(
             "Edit lyrics for this service",
-            height=520,
+            height=720,
             key="editor_text_box",
             label_visibility="collapsed",
         )
@@ -676,7 +676,7 @@ with main_left:
             preview_images = st.session_state["editor_preview_images"]
             focus_index = min(max(st.session_state.get("focused_preview_slide", 1), 1), len(preview_images))
             st.caption(f"{len(preview_images)} slide(s) — focused on slide {focus_index}")
-            render_scrollable_images(preview_images, height=560, focus_index=focus_index)
+            render_scrollable_images(preview_images, height=760, focus_index=focus_index)
 
             if st.session_state["editor_preview_ppt_data"] is not None:
                 st.download_button(
@@ -915,11 +915,3 @@ with main_right:
             )
     else:
         st.info("No songs added yet.")
-
-    st.markdown("---")
-    st.subheader("PowerPoint Preview")
-
-    if st.session_state["preview_images"]:
-        render_scrollable_images(st.session_state["preview_images"])
-    else:
-        st.info("Generate the service preview to see the slide images.")
