@@ -72,7 +72,6 @@ defaults = {
     "auto_refresh_editor_preview": True,
     "editor_preview_ppt_data": None,
     "editor_preview_images": None,
-    "editor_preview_selected_slide": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -404,24 +403,6 @@ def render_scrollable_images(images, height=780):
     st.components.v1.html(html, height=height + 20, scrolling=False)
 
 
-def render_single_preview_image(img_bytes, label=None):
-    if label:
-        st.caption(label)
-    st.image(img_bytes, use_container_width=True)
-
-
-def render_preview_thumbnails(images, selected_index=0):
-    if not images:
-        return
-
-    cols = st.columns(min(4, len(images)))
-    for i, img_bytes in enumerate(images):
-        col = cols[i % len(cols)]
-        with col:
-            is_selected = i == selected_index
-            caption = f"Slide {i + 1}" + (" ✓" if is_selected else "")
-            st.image(img_bytes, caption=caption, use_container_width=True)
-
 
 def load_song_into_editor_from_repository(match):
     song = {
@@ -449,7 +430,6 @@ def load_song_into_editor_from_repository(match):
     st.session_state["preview_images"] = None
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
-    st.session_state["editor_preview_selected_slide"] = 0
 
 
 def apply_pending_setlist_load():
@@ -498,7 +478,6 @@ def apply_pending_setlist_load():
     st.session_state["preview_images"] = None
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
-    st.session_state["editor_preview_selected_slide"] = 0
     st.session_state["pending_setlist_load"] = None
 
 
@@ -521,7 +500,6 @@ def reset_editor_for_new_song():
     st.session_state["preview_images"] = None
     st.session_state["editor_preview_ppt_data"] = None
     st.session_state["editor_preview_images"] = None
-    st.session_state["editor_preview_selected_slide"] = 0
 
 
 apply_pending_setlist_load()
@@ -788,12 +766,6 @@ with left_col:
             )
             st.session_state["editor_preview_ppt_data"] = preview_ppt_bytes
             st.session_state["editor_preview_images"] = preview_images
-
-            max_index = max(len(preview_images) - 1, 0)
-            st.session_state["editor_preview_selected_slide"] = min(
-                st.session_state.get("editor_preview_selected_slide", 0),
-                max_index,
-            )
         except Exception as e:
             st.error(f"Live preview failed: {e}")
 
@@ -853,48 +825,6 @@ with left_col:
         st.rerun()
 
 with right_col:
-    st.subheader("Live Preview of Current Song")
-
-    if selected_template_bytes is None:
-        st.info("Upload and select a template to preview the current song.")
-    elif not selected_template_ok:
-        st.info("Selected template is invalid, so live preview is unavailable.")
-    elif not current_slides:
-        st.info("Enter lyrics to preview the current song.")
-    elif st.session_state["editor_preview_images"]:
-        preview_images = st.session_state["editor_preview_images"]
-        slide_labels = [f"Slide {i}" for i in range(1, len(preview_images) + 1)]
-        current_index = min(
-            st.session_state.get("editor_preview_selected_slide", 0),
-            max(len(preview_images) - 1, 0),
-        )
-
-        selected_label = st.selectbox(
-            "Preview slide",
-            slide_labels,
-            index=current_index,
-            key="editor_preview_slide_select",
-        )
-        selected_index = slide_labels.index(selected_label)
-        st.session_state["editor_preview_selected_slide"] = selected_index
-
-        render_single_preview_image(
-            preview_images[selected_index],
-            label=f"Showing {selected_label} of {len(preview_images)}",
-        )
-
-        if st.session_state["editor_preview_ppt_data"] is not None:
-            st.download_button(
-                label="Download Current Song Preview",
-                data=st.session_state["editor_preview_ppt_data"],
-                file_name="current_song_preview.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                key="download_current_song_preview",
-            )
-    else:
-        st.info("Click refresh to build the current-song preview.")
-
-    st.markdown("---")
     st.subheader("Current Setlist")
 
     if st.session_state["setlist"]:
@@ -1020,7 +950,33 @@ with right_col:
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
 
-        st.subheader("PowerPoint Preview")
+        st.markdown("---")
+    st.subheader("Live Preview of Current Song")
+
+    if selected_template_bytes is None:
+        st.info("Upload and select a template to preview the current song.")
+    elif not selected_template_ok:
+        st.info("Selected template is invalid, so live preview is unavailable.")
+    elif not current_slides:
+        st.info("Enter lyrics to preview the current song.")
+    elif st.session_state["editor_preview_images"]:
+        preview_images = st.session_state["editor_preview_images"]
+        st.caption(f"{len(preview_images)} slide(s)")
+        render_scrollable_images(preview_images, height=600)
+
+        if st.session_state["editor_preview_ppt_data"] is not None:
+            st.download_button(
+                label="Download Current Song Preview",
+                data=st.session_state["editor_preview_ppt_data"],
+                file_name="current_song_preview.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                key="download_current_song_preview",
+            )
+    else:
+        st.info("Click refresh to build the current-song preview.")
+
+    st.markdown("---")
+    st.subheader("PowerPoint Preview")
         if st.session_state["preview_images"]:
             render_scrollable_images(st.session_state["preview_images"])
         else:
