@@ -566,9 +566,9 @@ else:
 # =========================
 # MAIN LAYOUT
 # =========================
-left_col, right_col = st.columns([1, 1.2])
+main_left, main_right = st.columns([1, 1.2])
 
-with left_col:
+with main_left:
     st.subheader("Load Song")
 
     if st.button("Start New Song"):
@@ -621,30 +621,12 @@ with left_col:
     with col2:
         st.text_input("Title", key="editor_title")
 
-    st.markdown("#### Raw Lyrics")
+    st.markdown("#### Slide Splitting")
     st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
     st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
 
-    editor_text = st.text_area(
-        "Edit lyrics for this service",
-        height=420,
-        key="editor_text_box",
-    )
-    st.session_state["editor_text"] = editor_text
-
-    current_slides = get_current_slides_from_raw_text(editor_text)
+    current_slides = get_current_slides_from_raw_text(st.session_state.get("editor_text_box", ""))
     slide_count = len(current_slides)
-
-    if st.session_state["auto_split_by_lines"]:
-        st.caption(
-            f"{slide_count} slide(s) for current song "
-            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
-        )
-    else:
-        st.caption(
-            f"{slide_count} slide(s) for current song "
-            f"(manual mode: blank lines separate slides)"
-        )
 
     if slide_count > 0:
         st.selectbox(
@@ -654,6 +636,58 @@ with left_col:
         )
     else:
         st.session_state["focused_preview_slide"] = 1
+
+    editor_col, preview_col = st.columns([1, 1])
+
+    with editor_col:
+        st.markdown("#### Raw Lyrics")
+        editor_text = st.text_area(
+            "Edit lyrics for this service",
+            height=520,
+            key="editor_text_box",
+            label_visibility="collapsed",
+        )
+        st.session_state["editor_text"] = editor_text
+
+        current_slides = get_current_slides_from_raw_text(editor_text)
+        slide_count = len(current_slides)
+
+        if st.session_state["auto_split_by_lines"]:
+            st.caption(
+                f"{slide_count} slide(s) for current song "
+                f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
+            )
+        else:
+            st.caption(
+                f"{slide_count} slide(s) for current song "
+                f"(manual mode: blank lines separate slides)"
+            )
+
+    with preview_col:
+        st.markdown("#### Live Preview of Current Song")
+
+        if selected_template_bytes is None:
+            st.info("Upload and select a template to preview the current song.")
+        elif not selected_template_ok:
+            st.info("Selected template is invalid, so live preview is unavailable.")
+        elif not current_slides:
+            st.info("Enter lyrics to preview the current song.")
+        elif st.session_state["editor_preview_images"]:
+            preview_images = st.session_state["editor_preview_images"]
+            focus_index = min(max(st.session_state.get("focused_preview_slide", 1), 1), len(preview_images))
+            st.caption(f"{len(preview_images)} slide(s) — focused on slide {focus_index}")
+            render_scrollable_images(preview_images, height=560, focus_index=focus_index)
+
+            if st.session_state["editor_preview_ppt_data"] is not None:
+                st.download_button(
+                    label="Download Current Song Preview",
+                    data=st.session_state["editor_preview_ppt_data"],
+                    file_name="current_song_preview.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    key="download_current_song_preview",
+                )
+        else:
+            st.info("Click refresh to build the current-song preview.")
 
     st.markdown("#### Song Formatting")
 
@@ -767,7 +801,7 @@ with left_col:
         st.session_state["reset_editor_pending"] = True
         st.rerun()
 
-with right_col:
+with main_right:
     st.subheader("Current Setlist")
 
     if st.session_state["setlist"]:
@@ -881,32 +915,6 @@ with right_col:
             )
     else:
         st.info("No songs added yet.")
-
-    st.markdown("---")
-    st.subheader("Live Preview of Current Song")
-
-    if selected_template_bytes is None:
-        st.info("Upload and select a template to preview the current song.")
-    elif not selected_template_ok:
-        st.info("Selected template is invalid, so live preview is unavailable.")
-    elif not current_slides:
-        st.info("Enter lyrics to preview the current song.")
-    elif st.session_state["editor_preview_images"]:
-        preview_images = st.session_state["editor_preview_images"]
-        focus_index = min(max(st.session_state.get("focused_preview_slide", 1), 1), len(preview_images))
-        st.caption(f"{len(preview_images)} slide(s) — focused on slide {focus_index}")
-        render_scrollable_images(preview_images, height=600, focus_index=focus_index)
-
-        if st.session_state["editor_preview_ppt_data"] is not None:
-            st.download_button(
-                label="Download Current Song Preview",
-                data=st.session_state["editor_preview_ppt_data"],
-                file_name="current_song_preview.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                key="download_current_song_preview",
-            )
-    else:
-        st.info("Click refresh to build the current-song preview.")
 
     st.markdown("---")
     st.subheader("PowerPoint Preview")
