@@ -1062,7 +1062,7 @@ with st.container():
         and new_signature != st.session_state.get("last_current_song_signature")
     )
 
-        if should_refresh_preview:
+    if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = "Current-song preview refreshed."
