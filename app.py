@@ -1193,7 +1193,7 @@ with st.container():
                 except Exception as e:
                     st.error(f"Preview generation failed: {e}")
 
-        allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+            allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
         button_label = (
             "Update Song in Setlist"
