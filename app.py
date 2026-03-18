@@ -1270,17 +1270,14 @@ with st.container():
             st.session_state["reset_editor_pending"] = True
             st.rerun()
 
-colA, colB = st.columns(2)
+preview_mode = st.radio(
+    "Preview Mode",
+    ["Song", "Service"],
+    index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
+    horizontal=True,
+)
 
-with colA:
-    if st.button("🎵 Song", use_container_width=True):
-        st.session_state["preview_mode"] = "song"
-        st.rerun()
-
-with colB:
-    if st.button("📜 Service", use_container_width=True):
-        st.session_state["preview_mode"] = "service"
-        st.rerun()
+st.session_state["preview_mode"] = "song" if preview_mode == "Song" else "service"
 
 with preview_col:
 
