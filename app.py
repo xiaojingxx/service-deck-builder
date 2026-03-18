@@ -78,6 +78,7 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
+    "refresh_preview_after_load": False
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -504,8 +505,9 @@ def load_song_into_editor_from_repository(match):
     st.session_state["last_editor_text"] = new_text
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
+    st.session_state["current_preview_slide"] = 1
     st.session_state["editor_ace_key"] += 1
-    st.session_state["current_preview_slide"] = None
+    st.session_state["refresh_preview_after_load"] = True
 
     if (
         st.session_state.get("selected_template_name")
@@ -1005,6 +1007,22 @@ with st.container():
         st.session_state["editor_text"] = editor_text
 
         current_slides = get_current_slides(editor_text)
+
+        if st.session_state.get("refresh_preview_after_load"):
+            if (
+                selected_template_bytes is not None
+                and selected_template_ok
+                and soffice_available()
+                and current_slides
+            ):
+                try:
+                    song_item = build_editor_song_item(current_slides)
+                    refresh_current_song_preview(song_item, selected_template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                except Exception as e:
+                    st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+
+            st.session_state["refresh_preview_after_load"] = False
 
         if st.session_state["auto_split_by_lines"]:
             st.caption(
