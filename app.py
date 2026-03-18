@@ -1334,6 +1334,9 @@ with st.container():
             st.rerun()
 
 with preview_col:
+    # =========================
+    # PREVIEW MODE
+    # =========================
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
@@ -1342,48 +1345,61 @@ with preview_col:
         key="preview_mode_radio",
     )
     
-    st.session_state["preview_mode"] = (
-        "song" if "Song" in st.session_state["preview_mode_radio"] else "service"
-    )
-
-    selected_mode = "song" if "Song" in preview_mode_label else "service"
+    selected_mode = "song" if "Song" in st.session_state["preview_mode_radio"] else "service"
     st.session_state["preview_mode"] = selected_mode
-
+    
+    # =========================
+    # SERVICE MODE
+    # =========================
     if selected_mode == "service":
         st.subheader("Service Preview")
         st.caption("📜 Full Service Deck")
-
+    
         if st.session_state.get("service_preview_images") is None:
-            if selected_template_bytes is None:
-                st.error("Please upload and select a template first.")
-            elif not selected_template_ok:
-                st.error("Cannot preview because the selected template is invalid.")
-            elif not soffice_available():
-                st.error("LibreOffice/soffice is not available.")
-            elif not st.session_state["setlist"]:
-                st.info("Add songs to the setlist to view the service preview.")
-            else:
+            if selected_template_bytes and selected_template_ok and soffice_available() and st.session_state["setlist"]:
                 try:
                     refresh_service_preview(
                         st.session_state["setlist"],
                         selected_template_bytes,
                     )
-                    if st.session_state.get("current_preview_slide") is None:
-                        st.session_state["current_preview_slide"] = 1
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
-
+            else:
+                st.info("Add songs and ensure template is valid.")
+    
+        # ✅ DOWNLOAD BUTTON
+        if st.session_state.get("ppt_data") is not None:
+            download_data = (
+                st.session_state["ppt_data"].getvalue()
+                if hasattr(st.session_state["ppt_data"], "getvalue")
+                else st.session_state["ppt_data"]
+            )
+    
+            st.download_button(
+                label="⬇️ Download Service PowerPoint",
+                data=download_data,
+                file_name="service_deck.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True,
+            )
+    
         preview_images = st.session_state.get("service_preview_images")
-
+    
+    # =========================
+    # SONG MODE
+    # =========================
     else:
         st.subheader("Current Song Preview")
         st.caption("🎵 Editing Current Song")
         preview_images = st.session_state.get("current_song_preview_images")
-
-    if preview_images is not None and len(preview_images) > 0:
+    
+    # =========================
+    # RENDER
+    # =========================
+    if preview_images:
         render_scrollable_images(
             preview_images,
-            height=1000,
+            height=600,
             active_slide=st.session_state.get("current_preview_slide"),
         )
     else:
