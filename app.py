@@ -1355,19 +1355,27 @@ with preview_col:
         st.subheader("Service Preview")
         st.caption("📜 Full Service Deck")
     
-        if st.session_state.get("service_preview_images") is None:
-            if selected_template_bytes and selected_template_ok and soffice_available() and st.session_state["setlist"]:
-                try:
-                    refresh_service_preview(
-                        st.session_state["setlist"],
-                        selected_template_bytes,
-                    )
-                except Exception as e:
-                    st.error(f"Service preview generation failed: {e}")
-            else:
-                st.info("Add songs and ensure template is valid.")
+        can_generate = (
+            selected_template_bytes
+            and selected_template_ok
+            and soffice_available()
+            and st.session_state["setlist"]
+        )
     
-        # ✅ DOWNLOAD BUTTON
+        # 🔥 ALWAYS try generate if missing
+        if st.session_state.get("service_preview_images") is None and can_generate:
+            try:
+                refresh_service_preview(
+                    st.session_state["setlist"],
+                    selected_template_bytes,
+                )
+            except Exception as e:
+                st.error(f"Service preview generation failed: {e}")
+    
+        # 🔍 DEBUG (temporary — helps you confirm)
+        # st.write("ppt_data:", st.session_state.get("ppt_data"))
+    
+        # ✅ SHOW DOWNLOAD IF ppt exists
         if st.session_state.get("ppt_data") is not None:
             download_data = (
                 st.session_state["ppt_data"].getvalue()
@@ -1382,25 +1390,9 @@ with preview_col:
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 use_container_width=True,
             )
+        elif can_generate:
+            st.warning("Generating service preview... try clicking Service again.")
+        else:
+            st.info("Add songs and ensure template is valid.")
     
         preview_images = st.session_state.get("service_preview_images")
-    
-    # =========================
-    # SONG MODE
-    # =========================
-    else:
-        st.subheader("Current Song Preview")
-        st.caption("🎵 Editing Current Song")
-        preview_images = st.session_state.get("current_song_preview_images")
-    
-    # =========================
-    # RENDER
-    # =========================
-    if preview_images:
-        render_scrollable_images(
-            preview_images,
-            height=600,
-            active_slide=st.session_state.get("current_preview_slide"),
-        )
-    else:
-        st.info("Preview will appear here.")
