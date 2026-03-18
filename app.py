@@ -745,7 +745,6 @@ selected_template_bytes, selected_template_ok, selected_template_errors, selecte
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.header("Controls")
 
     # =====================================================
     # STATIC SETLIST ORDER (always visible)
@@ -781,7 +780,8 @@ with st.sidebar:
                 st.caption("✏️ Editing")
     
     st.divider()
-
+    
+    st.header("Controls")
     # -------------------------
     # TEMPLATE
     # -------------------------
