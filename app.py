@@ -1061,37 +1061,37 @@ with st.container(height=380):
     
         st.markdown("</div>", unsafe_allow_html=True)
                         
-            if remove_index is not None:
-                st.session_state["setlist"].pop(remove_index)
-                st.session_state["ppt_data"] = None
-                st.session_state["preview_images"] = None
-                st.session_state["current_song_preview_images"] = None
-                st.session_state["service_preview_images"] = None
-                st.session_state["service_song_start_slides"] = []
-    
-                current_edit = st.session_state.get("editing_setlist_index")
-                if current_edit == remove_index:
-                    st.session_state["reset_editor_pending"] = True
-                elif current_edit is not None and current_edit > remove_index:
-                    st.session_state["editing_setlist_index"] = current_edit - 1
-    
-                pending = st.session_state.get("pending_setlist_load")
-                if pending == remove_index:
-                    st.session_state["pending_setlist_load"] = None
-                elif pending is not None and pending > remove_index:
-                    st.session_state["pending_setlist_load"] = pending - 1
-    
-                st.rerun()
+        if remove_index is not None:
+            st.session_state["setlist"].pop(remove_index)
+            st.session_state["ppt_data"] = None
+            st.session_state["preview_images"] = None
+            st.session_state["current_song_preview_images"] = None
+            st.session_state["service_preview_images"] = None
+            st.session_state["service_song_start_slides"] = []
 
-    
-            if st.session_state["ppt_data"] is not None:
-                download_data = (
-                    st.session_state["ppt_data"].getvalue()
-                    if hasattr(st.session_state["ppt_data"], "getvalue")
-                    else st.session_state["ppt_data"]
-                )
-        else:
-            st.info("No songs added yet.")
+            current_edit = st.session_state.get("editing_setlist_index")
+            if current_edit == remove_index:
+                st.session_state["reset_editor_pending"] = True
+            elif current_edit is not None and current_edit > remove_index:
+                st.session_state["editing_setlist_index"] = current_edit - 1
+
+            pending = st.session_state.get("pending_setlist_load")
+            if pending == remove_index:
+                st.session_state["pending_setlist_load"] = None
+            elif pending is not None and pending > remove_index:
+                st.session_state["pending_setlist_load"] = pending - 1
+
+            st.rerun()
+
+
+        if st.session_state["ppt_data"] is not None:
+            download_data = (
+                st.session_state["ppt_data"].getvalue()
+                if hasattr(st.session_state["ppt_data"], "getvalue")
+                else st.session_state["ppt_data"]
+            )
+    else:
+        st.info("No songs added yet.")
 
 # =========================
 # ROW 3 — SONG EDITOR | CURRENT SONG PREVIEW
