@@ -1211,6 +1211,7 @@ if text_changed and slide_count_has_changed:
 
     with preview_col:
         st.subheader("Current Song Preview")
+        st.write("Preview status:", st.session_state.get("editor_status_message"))
 
         if st.session_state.get("current_song_preview_images"):
             render_scrollable_images(
@@ -1220,8 +1221,9 @@ if text_changed and slide_count_has_changed:
             )
         else:
             st.info(
-                "The current-song preview will refresh when you add a new line, "
+                "The current-song preview will refresh when you add a new blank line, "
                 "or you can click 'Refresh Current Song Preview'."
             )
+        
 
 
