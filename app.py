@@ -627,6 +627,9 @@ def reset_editor_for_new_song():
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
     st.session_state["current_preview_slide"] = None
+def blank_separator_added(old_text: str, new_text: str) -> bool:
+    return new_text.count("\n\n") > old_text.count("\n\n")
+
 
 def detect_new_slide_target_line(old_text: str, new_text: str):
     old_lines = old_text.splitlines()
@@ -646,11 +649,12 @@ def detect_new_slide_target_line(old_text: str, new_text: str):
         else:
             return None
 
+    # move forward to the first non-blank line after the new separator
     for j in range(changed_idx, len(new_lines)):
         if new_lines[j].strip() != "":
             return j
 
-    return changed_idx
+    return None
 
 
 def get_slide_number_from_line_index(
@@ -708,6 +712,7 @@ def get_slide_number_from_line_index(
                 return slide_num
 
     return None
+
 # Must happen before widgets are created
 apply_pending_setlist_load()
 
@@ -982,7 +987,7 @@ with st.container():
         st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
         st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
         st.checkbox(
-            "Refresh current-song preview only when slide structure changes",
+            "Refresh current song preview only when a blank slide separator is added",
             key="refresh_on_new_line"
         )
 
@@ -1052,13 +1057,9 @@ with st.container():
         )
 
         text_changed = editor_text != old_text
-        old_slides = get_current_slides(old_text)
-        new_slides = current_slides
-        slides_structure_changed = old_slides != new_slides
-        old_slide_count = len(old_slides)
-        new_slide_count = len(new_slides)
+        separator_added = blank_separator_added(old_text, editor_text)
 
-        if text_changed and slides_structure_changed:
+        if text_changed and separator_added:
             target_line_index = detect_new_slide_target_line(old_text, editor_text)
 
             detected_slide = get_slide_number_from_line_index(
@@ -1072,30 +1073,26 @@ with st.container():
 
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
-            elif new_slide_count > 0:
-                current_active = st.session_state.get("current_preview_slide")
-                st.session_state["current_preview_slide"] = 1 if current_active is None else min(current_active, new_slide_count)
 
-        force_refresh = st.session_state.get("force_refresh", False)
-        
         should_refresh_preview = (
-            (force_refresh or slides_structure_changed)
+            text_changed
             and selected_template_bytes is not None
             and selected_template_ok
             and soffice_available()
             and bool(current_slides)
+            and (
+                (st.session_state["refresh_on_new_line"] and separator_added)
+                or (not st.session_state["refresh_on_new_line"])
+            )
             and new_signature != st.session_state.get("last_current_song_signature")
         )
-
-        st.session_state["force_refresh"] = False
 
         if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
-                    f"Slides: {old_slide_count} → {new_slide_count}. "
-                    f"Slides changed: {slides_structure_changed}. "
+                    f"Blank separator added: {separator_added}. "
                     f"Active slide: {st.session_state.get('current_preview_slide')}"
                 )
             except Exception as e:
@@ -1103,6 +1100,7 @@ with st.container():
 
         st.session_state["last_editor_text"] = editor_text
 
+        
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
@@ -1177,8 +1175,6 @@ with st.container():
         st.subheader("Current Song Preview")
 
         st.caption(
-            f"Old slides: {old_slide_count} | New slides: {new_slide_count} | "
-            f"Slides changed: {slides_structure_changed} | "
             f"Active slide: {st.session_state.get('current_preview_slide')} | "
             f"Target line: {st.session_state.get('last_detected_edit_line')}"
         )
