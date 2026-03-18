@@ -629,20 +629,7 @@ def reset_editor_for_new_song():
     st.session_state["current_preview_slide"] = None
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
-    old_lines = old_text.splitlines()
-    new_lines = new_text.splitlines()
-
-    # detect any new empty line
-    if len(new_lines) > len(old_lines):
-        for i in range(len(new_lines)):
-            if i >= len(old_lines):
-                if new_lines[i].strip() == "":
-                    return True
-            elif old_lines[i] != new_lines[i] and new_lines[i].strip() == "":
-                return True
-
-    return False
-
+    return new_text.count("\n\n") > old_text.count("\n\n")
 
 def detect_new_slide_target_line(old_text: str, new_text: str):
     old_lines = old_text.splitlines()
@@ -1018,11 +1005,6 @@ with st.container():
             height=420,
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
         )
-
-        if st.button("Update Preview"):
-            st.session_state["editor_text"] = editor_text
-            st.session_state["force_refresh"] = True
-            st.rerun()
     
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
@@ -1070,21 +1052,22 @@ with st.container():
         )
 
         text_changed = editor_text != old_text
-        separator_added = blank_separator_added(old_text, editor_text)
 
-        if text_changed and separator_added:
+        if st.session_state["auto_split_by_lines"]:
+            trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
+        else:
+            trigger_refresh = blank_separator_added(old_text, editor_text)
+
+        if text_changed and trigger_refresh:
             old_slides = get_current_slides(old_text)
             new_slides = get_current_slides(editor_text)
 
             st.session_state["last_detected_edit_line"] = None
 
             if not st.session_state["auto_split_by_lines"]:
-                # Manual mode: blank line creates a new slide boundary,
-                # so jump to the first newly shifted/new slide.
                 if len(new_slides) >= len(old_slides):
                     st.session_state["current_preview_slide"] = min(len(old_slides) + 1, len(new_slides))
             else:
-                # Auto-split mode: keep the older line-based detection
                 target_line_index = detect_new_slide_target_line(old_text, editor_text)
 
                 detected_slide = get_slide_number_from_line_index(
@@ -1098,7 +1081,7 @@ with st.container():
 
                 if detected_slide is not None:
                     st.session_state["current_preview_slide"] = detected_slide
-        
+
         should_refresh_preview = (
             text_changed
             and selected_template_bytes is not None
@@ -1106,7 +1089,7 @@ with st.container():
             and soffice_available()
             and bool(current_slides)
             and (
-                (st.session_state["refresh_on_new_line"] and separator_added)
+                (st.session_state["refresh_on_new_line"] and trigger_refresh)
                 or (not st.session_state["refresh_on_new_line"])
             )
             and new_signature != st.session_state.get("last_current_song_signature")
@@ -1205,10 +1188,11 @@ with st.container():
         st.caption(
             f"Old slides: {len(old_slides_dbg)} | "
             f"New slides: {len(new_slides_dbg)} | "
+            f"Trigger refresh: {trigger_refresh} | "
             f"Active slide: {st.session_state.get('current_preview_slide')} | "
             f"Target line: {st.session_state.get('last_detected_edit_line')}"
         )
-
+        
         preview_images = st.session_state.get("current_song_preview_images")
 
         if preview_images is not None and len(preview_images) > 0:
