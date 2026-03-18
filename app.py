@@ -667,7 +667,29 @@ def reset_editor_for_new_song():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
-    st.session_state["current_preview_slide"] = None
+    st.session_state["current_preview_slide"] = 1
+    
+    # Generate current-song preview immediately after loading from setlist
+    if (
+        st.session_state.get("selected_template_name")
+        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
+        and soffice_available()
+    ):
+        try:
+            template_bytes = st.session_state["uploaded_templates"][
+                st.session_state["selected_template_name"]
+            ]
+            template_ok, _, _ = validate_template_bytes(template_bytes)
+    
+            if template_ok:
+                current_slides = get_current_slides(st.session_state["editor_text"])
+    
+                if current_slides:
+                    song_item = build_editor_song_item(current_slides)
+                    refresh_current_song_preview(song_item, template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+        except Exception as e:
+            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
     old_lines = old_text.splitlines()
@@ -991,12 +1013,10 @@ with st.container():
                     with row_col2:
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["preview_mode"] = "song"
+                            st.session_state["preview_mode_radio"] = "🎵 Song"
                             st.session_state["pending_setlist_load"] = i
-                    
-                            # 🔥 FORCE preview refresh
                             st.session_state["current_song_preview_images"] = None
                             st.session_state["last_current_song_signature"] = None
-                    
                             st.rerun()
                     
                     with row_col3:
@@ -1319,15 +1339,12 @@ with preview_col:
         ["🎵 Song", "📜 Service"],
         index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
         horizontal=True,
-        key="preview_mode_radio"
+        key="preview_mode_radio",
     )
     
-    # ONLY update session state if user clicks radio
-    if "preview_mode_radio" in st.session_state:
-        selected = st.session_state["preview_mode_radio"]
-        st.session_state["preview_mode"] = (
-            "song" if "Song" in selected else "service"
-        )
+    st.session_state["preview_mode"] = (
+        "song" if "Song" in st.session_state["preview_mode_radio"] else "service"
+    )
 
     selected_mode = "song" if "Song" in preview_mode_label else "service"
     st.session_state["preview_mode"] = selected_mode
