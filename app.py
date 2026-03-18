@@ -923,41 +923,31 @@ with st.container():
                             unsafe_allow_html=True,
                         )
                     
-                    # ✅ Buttons (subtle highlight only)
-                    button_bg = "#eff6ff" if is_current else "transparent"
-                    
+                    # Buttons
                     with row_col2:
-                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["pending_setlist_load"] = i
                             st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col3:
-                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↑", key=f"up_{i}") and i > 0:
                             st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
                                 st.session_state["setlist"][i],
                                 st.session_state["setlist"][i - 1],
                             )
                             st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col4:
-                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
                             st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
                                 st.session_state["setlist"][i],
                                 st.session_state["setlist"][i + 1],
                             )
                             st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col5:
-                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("🗑", key=f"delete_{i}"):
                             remove_index = i
-                        st.markdown("</div>", unsafe_allow_html=True)
                         
             if remove_index is not None:
                 st.session_state["setlist"].pop(remove_index)
