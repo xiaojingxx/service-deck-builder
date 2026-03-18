@@ -1294,14 +1294,6 @@ with st.container():
             f"Target line: {st.session_state.get('last_detected_edit_line')}"
         )
         
-        st.write({
-            "selected_template_ok": selected_template_ok,
-            "has_template_bytes": selected_template_bytes is not None,
-            "slides_count": len(current_slides),
-            "has_preview_images": st.session_state.get("current_song_preview_images") is not None,
-            "current_preview_slide": st.session_state.get("current_preview_slide"),
-        })
-        
         preview_images = st.session_state.get("current_song_preview_images")
     
         if preview_images is not None and len(preview_images) > 0:
