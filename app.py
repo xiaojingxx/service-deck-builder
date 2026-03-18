@@ -747,98 +747,92 @@ selected_template_bytes, selected_template_ok, selected_template_errors, selecte
 with st.sidebar:
     st.header("Controls")
 
-    # -------------------------
-    # SETLIST
-    # -------------------------
-    with st.expander("1. Setlist", expanded=True):
-        setlist = st.session_state["setlist"]
+    # =====================================================
+    # STATIC SETLIST ORDER (always visible)
+    # =====================================================
+    st.markdown("### Setlist Order")
 
-        if st.button("Clear Setlist", use_container_width=True):
-            st.session_state["setlist"] = []
-            st.session_state["editing_setlist_index"] = None
-            st.session_state["pending_setlist_load"] = None
-            st.session_state["setlist_selected_index"] = 0
-            st.session_state["preview_mode"] = "song"
-            st.session_state["current_song_preview_images"] = None
-            clear_service_outputs()
-            st.rerun()
+    if not st.session_state["setlist"]:
+        st.caption("No songs added yet.")
+    else:
+        selected_index = st.session_state.get("setlist_selected_index", 0)
+        editing_index = st.session_state.get("editing_setlist_index")
 
-        if not setlist:
-            st.info("No songs added yet.")
-        else:
-            labels = []
-            for i, song in enumerate(setlist):
-                if song["umh_number"]:
-                    labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})')
-                else:
-                    labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
+        selected_index = max(
+            0,
+            min(selected_index, len(st.session_state["setlist"]) - 1)
+        )
+        st.session_state["setlist_selected_index"] = selected_index
 
-            st.session_state["setlist_selected_index"] = min(
-                st.session_state["setlist_selected_index"],
-                len(labels) - 1,
-            )
+        order_lines = []
 
-            selected_index = st.selectbox(
-                "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                index=st.session_state["setlist_selected_index"],
-            )
-            st.session_state["setlist_selected_index"] = selected_index
+        for i, song in enumerate(st.session_state["setlist"]):
+            is_selected = i == selected_index
+            is_editing = i == editing_index
 
-            action_cols = st.columns(4)
-            with action_cols[0]:
-                if st.button("Edit", use_container_width=True):
-                    st.session_state["pending_setlist_load"] = selected_index
-                    st.session_state["preview_mode"] = "song"
-                    st.rerun()
+            if song["umh_number"]:
+                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
+            else:
+                label = f'{i+1}. {song["title"]}'
 
-            with action_cols[1]:
-                if st.button("Up", use_container_width=True) and selected_index > 0:
-                    setlist[selected_index - 1], setlist[selected_index] = setlist[selected_index], setlist[selected_index - 1]
-                    st.session_state["setlist_selected_index"] = selected_index - 1
-                    clear_service_outputs()
-                    st.rerun()
+            suffix = " ✏️" if is_editing else ""
 
-            with action_cols[2]:
-                if st.button("Down", use_container_width=True) and selected_index < len(setlist) - 1:
-                    setlist[selected_index + 1], setlist[selected_index] = setlist[selected_index], setlist[selected_index + 1]
-                    st.session_state["setlist_selected_index"] = selected_index + 1
-                    clear_service_outputs()
-                    st.rerun()
+            if is_selected:
+                order_lines.append(f"""
+                <div id="sidebar-setlist-current-item" style="
+                    background:#eff6ff;
+                    border:1px solid #bfdbfe;
+                    border-radius:6px;
+                    padding:6px 8px;
+                    margin-bottom:6px;
+                    font-weight:600;
+                    font-size:0.92rem;
+                ">
+                    🔹 {label}{suffix}
+                </div>
+                """)
+            else:
+                order_lines.append(f"""
+                <div style="
+                    padding:4px 8px;
+                    margin-bottom:4px;
+                    font-size:0.9rem;
+                ">
+                    {label}{suffix}
+                </div>
+                """)
 
-            with action_cols[3]:
-                if st.button("Delete", use_container_width=True):
-                    setlist.pop(selected_index)
-                    if setlist:
-                        st.session_state["setlist_selected_index"] = min(selected_index, len(setlist) - 1)
-                    else:
-                        st.session_state["setlist_selected_index"] = 0
-                    clear_service_outputs()
-                    st.rerun()
+        sidebar_setlist_html = f"""
+        <div id="sidebar-setlist-order-box" style="
+            border:1px solid #e5e7eb;
+            border-radius:8px;
+            padding:10px;
+            background:#ffffff;
+            max-height:220px;
+            overflow-y:auto;
+        ">
+            {''.join(order_lines)}
+        </div>
 
-            st.markdown("**Order**")
-            for i, song in enumerate(setlist):
-                prefix = "👉 " if i == st.session_state["setlist_selected_index"] else ""
-                edit_tag = " ✏️" if i == st.session_state.get("editing_setlist_index") else ""
-                if song["umh_number"]:
-                    st.write(f"{prefix}{i+1}. UMH {song['umh_number']} {song['title']}{edit_tag}")
-                else:
-                    st.write(f"{prefix}{i+1}. {song['title']}{edit_tag}")
+        <script>
+        const box = document.getElementById("sidebar-setlist-order-box");
+        const current = document.getElementById("sidebar-setlist-current-item");
 
-            if st.session_state.get("ppt_data") is not None:
-                st.download_button(
-                    label="Download Service PowerPoint",
-                    data=st.session_state["ppt_data"].getvalue(),
-                    file_name="service_deck.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    use_container_width=True,
-                )
+        if (box && current) {{
+            const targetTop = current.offsetTop - (box.clientHeight / 2) + (current.clientHeight / 2);
+            box.scrollTop = Math.max(0, targetTop);
+        }}
+        </script>
+        """
+
+        st.markdown(sidebar_setlist_html, unsafe_allow_html=True)
+
+    st.divider()
 
     # -------------------------
     # TEMPLATE
     # -------------------------
-    with st.expander("2. Template", expanded=True):
+    with st.expander("1. Template", expanded=True):
         uploaded_templates = st.file_uploader(
             "Upload template(s)",
             type=["pptx"],
@@ -889,7 +883,7 @@ with st.sidebar:
     # -------------------------
     # LOAD SONG
     # -------------------------
-    with st.expander("3. Load Song", expanded=True):
+    with st.expander("2. Load Song", expanded=True):
         if st.button("Start New Song", use_container_width=True):
             st.session_state["reset_editor_pending"] = True
             st.rerun()
@@ -925,7 +919,126 @@ with st.sidebar:
                     st.rerun()
             elif keyword.strip():
                 st.info("No matching titles found.")
-                
+
+    # -------------------------
+    # SETLIST
+    # -------------------------
+    with st.expander("3. Setlist", expanded=True):
+        setlist = st.session_state["setlist"]
+
+        if st.button("Clear Setlist", use_container_width=True):
+            st.session_state["setlist"] = []
+            st.session_state["editing_setlist_index"] = None
+            st.session_state["pending_setlist_load"] = None
+            st.session_state["setlist_selected_index"] = 0
+            st.session_state["preview_mode"] = "song"
+            st.session_state["current_song_preview_images"] = None
+            clear_service_outputs()
+            st.rerun()
+
+        if not setlist:
+            st.info("No songs added yet.")
+        else:
+            labels = []
+            for i, song in enumerate(setlist):
+                if song["umh_number"]:
+                    labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})')
+                else:
+                    labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
+
+            st.session_state["setlist_selected_index"] = min(
+                st.session_state["setlist_selected_index"],
+                len(labels) - 1,
+            )
+
+            selected_index = st.selectbox(
+                "Selected song",
+                options=list(range(len(labels))),
+                format_func=lambda i: labels[i],
+                index=st.session_state["setlist_selected_index"],
+                key="setlist_selectbox_sidebar",
+            )
+            st.session_state["setlist_selected_index"] = selected_index
+
+            action_cols = st.columns(4)
+            with action_cols[0]:
+                if st.button("Edit", use_container_width=True):
+                    st.session_state["pending_setlist_load"] = selected_index
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["current_song_preview_images"] = None
+                    st.session_state["last_current_song_signature"] = None
+                    st.rerun()
+
+            with action_cols[1]:
+                if st.button("Up", use_container_width=True) and selected_index > 0:
+                    setlist[selected_index - 1], setlist[selected_index] = (
+                        setlist[selected_index],
+                        setlist[selected_index - 1],
+                    )
+                    st.session_state["setlist_selected_index"] = selected_index - 1
+                    clear_service_outputs()
+                    st.rerun()
+
+            with action_cols[2]:
+                if st.button("Down", use_container_width=True) and selected_index < len(setlist) - 1:
+                    setlist[selected_index + 1], setlist[selected_index] = (
+                        setlist[selected_index],
+                        setlist[selected_index + 1],
+                    )
+                    st.session_state["setlist_selected_index"] = selected_index + 1
+                    clear_service_outputs()
+                    st.rerun()
+
+            with action_cols[3]:
+                if st.button("Delete", use_container_width=True):
+                    setlist.pop(selected_index)
+
+                    if setlist:
+                        st.session_state["setlist_selected_index"] = min(
+                            selected_index,
+                            len(setlist) - 1,
+                        )
+                    else:
+                        st.session_state["setlist_selected_index"] = 0
+
+                    if st.session_state.get("editing_setlist_index") == selected_index:
+                        st.session_state["reset_editor_pending"] = True
+                    elif (
+                        st.session_state.get("editing_setlist_index") is not None
+                        and st.session_state["editing_setlist_index"] > selected_index
+                    ):
+                        st.session_state["editing_setlist_index"] -= 1
+
+                    pending = st.session_state.get("pending_setlist_load")
+                    if pending == selected_index:
+                        st.session_state["pending_setlist_load"] = None
+                    elif pending is not None and pending > selected_index:
+                        st.session_state["pending_setlist_load"] = pending - 1
+
+                    clear_service_outputs()
+                    st.rerun()
+
+            service_col1, service_col2 = st.columns(2)
+
+            with service_col1:
+                if st.button("Go to Service", use_container_width=True):
+                    st.session_state["preview_mode"] = "service"
+                    starts = st.session_state.get("service_song_start_slides", [])
+                    st.session_state["current_preview_slide"] = (
+                        starts[selected_index] if selected_index < len(starts) else 1
+                    )
+                    st.rerun()
+
+            with service_col2:
+                if st.session_state.get("ppt_data") is not None:
+                    st.download_button(
+                        label="Download PPT",
+                        data=st.session_state["ppt_data"].getvalue(),
+                        file_name="service_deck.pptx",
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        use_container_width=True,
+                    )
+
 # =========================================================
 # MAIN LAYOUT
 # =========================================================
