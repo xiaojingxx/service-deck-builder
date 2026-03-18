@@ -1000,17 +1000,20 @@ with st.container():
             tab_size=2,
             wrap=True,
             show_gutter=False,
-            auto_update= True,
+            auto_update=True,
             readonly=False,
             height=420,
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
         )
+
+        if editor_text != st.session_state.get("editor_text", ""):
+            st.session_state["editor_text"] = editor_text
+            st.rerun()
     
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
 
         old_text = st.session_state.get("last_editor_text", "")
-        st.session_state["editor_text"] = editor_text
 
         current_slides = get_current_slides(editor_text)
 
