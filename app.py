@@ -371,9 +371,9 @@ def pptx_to_preview_images(pptx_bytes):
         doc.close()
         return images
 
-
 def render_scrollable_images(images, height=760, active_slide=None):
     container_id = "current-song-scroll-container"
+    active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
     <div id="{container_id}" style="
@@ -384,6 +384,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
         border-radius: 8px;
         background: #fafafa;
         box-sizing: border-box;
+        scroll-behavior: smooth;
     ">
     """
 
@@ -406,76 +407,55 @@ def render_scrollable_images(images, height=760, active_slide=None):
 
     html += "</div>"
 
-    # 🔥 Auto-scroll JS
-    if active_slide is not None:
-        html += f"""
-        <script>
-        const container = document.getElementById("{container_id}");
-        const target = document.getElementById("slide-{active_slide}");
-        const scrollKey = "{container_id}-scrollTop";
-    
-        function restoreScroll() {{
-            const savedScroll = sessionStorage.getItem(scrollKey);
-            if (container && savedScroll !== null) {{
-                container.scrollTop = parseInt(savedScroll, 10);
-            }}
-        }}
-    
-        function saveScroll() {{
-            if (container) {{
-                sessionStorage.setItem(scrollKey, container.scrollTop);
-            }}
-        }}
-    
-        function scrollToTarget() {{
-            if (container && target) {{
-                target.scrollIntoView({{
-                    behavior: "smooth",
-                    block: "start"
-                }});
-            }}
-        }}
-    
+    html += f"""
+    <script>
+    const container = document.getElementById("{container_id}");
+    const activeSlide = {active_slide_js};
+    const scrollKey = "current-song-preview-scroll";
+
+    function saveScroll() {{
         if (container) {{
+            sessionStorage.setItem(scrollKey, container.scrollTop);
+        }}
+    }}
+
+    function restoreScroll() {{
+        const saved = sessionStorage.getItem(scrollKey);
+        if (container && saved !== null) {{
+            container.scrollTop = parseInt(saved, 10);
+        }}
+    }}
+
+    function scrollToActiveSlide() {{
+        if (!container || activeSlide === null) return;
+
+        const target = document.getElementById("slide-" + activeSlide);
+        if (!target) return;
+
+        const top = target.offsetTop - 12;
+        container.scrollTop = top;
+        saveScroll();
+    }}
+
+    if (container) {{
+        container.addEventListener("scroll", saveScroll);
+    }}
+
+    setTimeout(() => {{
+        if (activeSlide !== null) {{
+            scrollToActiveSlide();
+        }} else {{
             restoreScroll();
-            container.addEventListener("scroll", saveScroll);
         }}
-    
-        // wait for layout/images to settle, then move from restored position to active slide
-        setTimeout(() => {{
-            scrollToTarget();
-            setTimeout(saveScroll, 500);
-        }}, 400);
-        </script>
-        """
-    else:
-        html += f"""
-        <script>
-        const container = document.getElementById("{container_id}");
-        const scrollKey = "{container_id}-scrollTop";
-    
-        function restoreScroll() {{
-            const savedScroll = sessionStorage.getItem(scrollKey);
-            if (container && savedScroll !== null) {{
-                container.scrollTop = parseInt(savedScroll, 10);
-            }}
-        }}
-    
-        function saveScroll() {{
-            if (container) {{
-                sessionStorage.setItem(scrollKey, container.scrollTop);
-            }}
-        }}
-    
-        if (container) {{
-            restoreScroll();
-            container.addEventListener("scroll", saveScroll);
-        }}
-        </script>
-        """
+    }}, 500);
+    </script>
+    """
 
     st.components.v1.html(html, height=height, scrolling=False)
-    
+
+
+
+
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state.get("editor_umh", "").strip(),
