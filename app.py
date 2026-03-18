@@ -1,3 +1,4 @@
+
 import os
 import base64
 import tempfile
@@ -78,7 +79,6 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
-    "last_visible_slide": 1
 }
 
 for k, v in defaults.items():
@@ -392,10 +392,10 @@ def render_scrollable_images(images, height=760, active_slide=None):
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " <- editing here" if active_slide == i else ""
+        badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
-        <div class="slide-block" data-slide-number="{i}" id="slide-{i}" style="margin-bottom: 24px;">
+        <div id="slide-{i}" style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">
                 Slide {i}{badge}
             </div>
@@ -412,89 +412,50 @@ def render_scrollable_images(images, height=760, active_slide=None):
     <script>
     const container = document.getElementById("{container_id}");
     const activeSlide = {active_slide_js};
-    const slideBlocks = Array.from(container.querySelectorAll(".slide-block"));
-    const visibleSlideKey = "current-song-preview-visible-slide";
+    const scrollKey = "current-song-preview-scroll";
 
-    function clampSlide(slideNum) {{
-        if (slideBlocks.length === 0) return 1;
-        return Math.max(1, Math.min(slideNum, slideBlocks.length));
-    }}
-
-    function getSavedVisibleSlide() {{
-        const saved = sessionStorage.getItem(visibleSlideKey);
-        if (!saved) return 1;
-        const parsed = parseInt(saved, 10);
-        if (isNaN(parsed)) return 1;
-        return clampSlide(parsed);
-    }}
-
-    function saveVisibleSlide(slideNum) {{
-        sessionStorage.setItem(visibleSlideKey, String(clampSlide(slideNum)));
-    }}
-
-    function getTopVisibleSlide() {{
-        if (!container || slideBlocks.length === 0) return 1;
-
-        const containerRect = container.getBoundingClientRect();
-        let bestSlide = 1;
-        let bestDistance = Infinity;
-
-        slideBlocks.forEach(block => {{
-            const rect = block.getBoundingClientRect();
-            const distance = Math.abs(rect.top - containerRect.top - 12);
-            const slideNum = parseInt(block.dataset.slideNumber, 10);
-
-            if (distance < bestDistance) {{
-                bestDistance = distance;
-                bestSlide = slideNum;
-            }}
-        }});
-
-        return clampSlide(bestSlide);
-    }}
-
-    function jumpToSlide(slideNum, smooth) {{
-        const clamped = clampSlide(slideNum);
-        const target = document.getElementById("slide-" + clamped);
-        if (!container || !target) return;
-
-        const top = target.offsetTop - 12;
-        if (smooth) {{
-            container.scrollTo({{ top: top, behavior: "smooth" }});
-        }} else {{
-            container.scrollTop = top;
+    function saveScroll() {{
+        if (container) {{
+            sessionStorage.setItem(scrollKey, container.scrollTop);
         }}
     }}
 
-    function handleScroll() {{
-        const current = getTopVisibleSlide();
-        saveVisibleSlide(current);
+    function restoreScroll() {{
+        const saved = sessionStorage.getItem(scrollKey);
+        if (container && saved !== null) {{
+            container.scrollTop = parseInt(saved, 10);
+        }}
+    }}
+
+    function scrollToActiveSlide() {{
+        if (!container || activeSlide === null) return;
+
+        const target = document.getElementById("slide-" + activeSlide);
+        if (!target) return;
+
+        const top = target.offsetTop - 12;
+        container.scrollTop = top;
+        saveScroll();
     }}
 
     if (container) {{
-        container.addEventListener("scroll", handleScroll);
+        container.addEventListener("scroll", saveScroll);
     }}
 
     setTimeout(() => {{
-        const oldSlide = getSavedVisibleSlide();
-
         if (activeSlide !== null) {{
-            jumpToSlide(oldSlide, false);
-            setTimeout(() => {{
-                jumpToSlide(activeSlide, true);
-                setTimeout(() => {{
-                    saveVisibleSlide(activeSlide);
-                }}, 500);
-            }}, 150);
+            scrollToActiveSlide();
         }} else {{
-            jumpToSlide(oldSlide, false);
-            saveVisibleSlide(oldSlide);
+            restoreScroll();
         }}
     }}, 500);
     </script>
     """
 
     st.components.v1.html(html, height=height, scrolling=False)
+
+
+
 
 def build_editor_song_item(current_slides):
     return {
@@ -699,7 +660,6 @@ def blank_separator_added(old_text: str, new_text: str) -> bool:
         return positions
 
     return len(valid_blank_positions(new_lines)) > len(valid_blank_positions(old_lines))
-
 def detect_new_slide_target_line(old_text: str, new_text: str):
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
@@ -791,11 +751,7 @@ def get_first_new_blank_separator_index(old_text: str, new_text: str):
 
     for pos in new_blank_positions:
         if pos not in old_blank_positions:
-            # ignore trailing blank lines with no non-blank content after them
-            for j in range(pos + 1, len(new_lines)):
-                if new_lines[j].strip() != "":
-                    return pos
-            return None
+            return pos
 
     return None
 
@@ -1145,47 +1101,50 @@ with st.container():
         else:
             trigger_refresh = blank_separator_added(old_text, editor_text)
 
-if text_changed and trigger_refresh:
-    st.session_state["last_detected_edit_line"] = None
-
-    if not st.session_state["auto_split_by_lines"]:
-        blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
-
-        if blank_idx is not None:
-            lines = editor_text.splitlines()
-            target_line_index = None
-
-            for i in range(blank_idx + 1, len(lines)):
-                if lines[i].strip() != "":
-                    target_line_index = i
-                    break
-
-            st.session_state["last_detected_edit_line"] = target_line_index
-
+    if text_changed and trigger_refresh:
+        st.session_state["last_detected_edit_line"] = None
+    
+        if not st.session_state["auto_split_by_lines"]:
+            blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
+    
+            if blank_idx is not None:
+                # move to first non-blank line after inserted separator
+                lines = editor_text.splitlines()
+                target_line_index = None
+    
+                for i in range(blank_idx + 1, len(lines)):
+                    if lines[i].strip() != "":
+                        target_line_index = i
+                        break
+    
+                st.session_state["last_detected_edit_line"] = target_line_index
+    
+                detected_slide = get_slide_number_from_line_index(
+                    editor_text,
+                    target_line_index,
+                    auto_split=False,
+                    lines_per_slide=st.session_state["lines_per_slide"],
+                )
+    
+                if detected_slide is not None:
+                    st.session_state["current_preview_slide"] = detected_slide
+                else:
+                    # fallback: do NOT change slide
+                    pass
+        else:
+            target_line_index = detect_new_slide_target_line(old_text, editor_text)
+    
             detected_slide = get_slide_number_from_line_index(
                 editor_text,
                 target_line_index,
-                auto_split=False,
-                lines_per_slide=st.session_state["lines_per_slide"],
+                st.session_state["auto_split_by_lines"],
+                st.session_state["lines_per_slide"],
             )
-
+    
+            st.session_state["last_detected_edit_line"] = target_line_index
+    
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
-
-    else:
-        target_line_index = detect_new_slide_target_line(old_text, editor_text)
-
-        detected_slide = get_slide_number_from_line_index(
-            editor_text,
-            target_line_index,
-            st.session_state["auto_split_by_lines"],
-            st.session_state["lines_per_slide"],
-        )
-
-        st.session_state["last_detected_edit_line"] = target_line_index
-
-        if detected_slide is not None:
-            st.session_state["current_preview_slide"] = detected_slide
 
         should_refresh_preview = (
             text_changed
