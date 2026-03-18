@@ -674,6 +674,16 @@ def get_slide_number_from_line_index(
 
     return None
 
+def count_blank_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip() == "")
+
+def blank_line_added(old_text: str, new_text: str) -> bool:
+    return count_blank_lines(new_text) > count_blank_lines(old_text)
+
+def slide_count_changed(old_text: str, new_text: str) -> bool:
+    old_slides = get_current_slides(old_text)
+    new_slides = get_current_slides(new_text)
+    return len(new_slides) != len(old_slides)
 
 
 # Must happen before widgets are created
@@ -958,7 +968,7 @@ with st.container():
         )
 
         st.checkbox(
-            "Refresh current-song preview only when a new line is added",
+            "Refresh current-song preview only when a blank line separator is added",
             key="refresh_on_new_line"
         )
 
@@ -1049,8 +1059,10 @@ with st.container():
 
     text_changed = editor_text != old_text
     new_line_added = should_refresh_on_new_line(old_text, editor_text)
+    new_blank_line_added = blank_line_added(old_text, editor_text)
+    slide_count_has_changed = slide_count_changed(old_text, editor_text)
     
-    if text_changed and new_line_added:
+    if text_changed and slide_count_has_changed:
         edited_line_index = detect_changed_line_index(old_text, editor_text)
         detected_slide = get_slide_number_from_line_index(
             editor_text,
@@ -1073,7 +1085,7 @@ with st.container():
         and soffice_available()
         and bool(current_slides)
         and (
-            (st.session_state["refresh_on_new_line"] and new_line_added)
+            (st.session_state["refresh_on_new_line"] and slide_count_has_changed)
             or (not st.session_state["refresh_on_new_line"])
         )
         and new_signature != st.session_state.get("last_current_song_signature")
