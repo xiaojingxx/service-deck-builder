@@ -1112,22 +1112,37 @@ with st.container(height=380):
                 f"<div style='color:#6b7280; font-size:0.85rem; margin-top:6px;'>... {len(st.session_state['setlist']) - end} song(s) below</div>"
                 if end < len(st.session_state["setlist"]) else ""
             )
-
-            html_block = f"""
-<div style="
-    border:1px solid #e5e7eb;
-    border-radius:8px;
-    padding:10px;
-    background:#ffffff;
-    max-height:220px;
-    overflow-y:auto;
-    scroll-behavior:smooth;
-">
-    {above_text}
-    {''.join(order_lines)}
-    {below_text}
-</div>
-"""
+    html_block = f"""
+    <div id="setlist-order-box" style="
+        border:1px solid #e5e7eb;
+        border-radius:8px;
+        padding:10px;
+        background:#ffffff;
+        max-height:220px;
+        overflow-y:auto;
+        scroll-behavior:smooth;
+    ">
+        {above_text}
+        {''.join(order_lines)}
+        {below_text}
+    </div>
+    
+    <script>
+    const box = document.getElementById("setlist-order-box");
+    const key = "setlist-order-scroll";
+    
+    if (box) {{
+        const saved = sessionStorage.getItem(key);
+        if (saved !== null) {{
+            box.scrollTop = parseInt(saved, 10);
+        }}
+    
+        box.addEventListener("scroll", () => {{
+            sessionStorage.setItem(key, box.scrollTop);
+        }});
+    }}
+    </script>
+    """
 
             st.markdown(html_block, unsafe_allow_html=True)
 
