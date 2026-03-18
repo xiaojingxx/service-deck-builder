@@ -666,7 +666,6 @@ with st.container():
                     if match:
                         load_song_into_editor_from_repository(match)
                         st.success("Hymn loaded.")
-                        st.rerun()
                     else:
                         st.error("Hymn not found.")
 
@@ -687,7 +686,6 @@ with st.container():
                         match = matches[chosen_index]
                         load_song_into_editor_from_repository(match)
                         st.success("Hymn loaded.")
-                        st.rerun()
                 else:
                     st.info("No matching titles found.")
 
