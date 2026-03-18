@@ -896,83 +896,62 @@ with st.container():
                     
                     total_slides = len(song["slides"])
                     
-                    row_bg = "#dbeafe" if is_current else "#ffffff"  # stronger blue
-                    row_border = "2px solid #1d4ed8" if is_current else "1px solid #e5e7eb"
-                    row_badge = " ✏️ Editing" if is_current else ""
-                    
-                    row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
-                        [10, 1, 1, 1, 1], gap="small"
-                    )
-
-                    st.markdown(
-                        f"""
-                        <div style="
-                            background: {row_bg};
-                            border: {row_border};
-                            border-radius: 8px;
-                            padding: 6px 6px;
-                            margin-bottom: 6px;
-                        ">
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    
                     row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
                         [10, 1, 1, 1, 1], gap="small"
                     )
                     
+                    # 🎯 Strong highlight on title
                     with row_col1:
+                        bg = "#dbeafe" if is_current else "#ffffff"
+                        border = "2px solid #1d4ed8" if is_current else "1px solid #e5e7eb"
+                        badge = " ✏️ Editing" if is_current else ""
+                    
                         st.markdown(
-                            f"<strong>{i+1}. {label} ({total_slides}){row_badge}</strong>",
+                            f"""
+                            <div style="
+                                background: {bg};
+                                border: {border};
+                                border-radius: 8px;
+                                padding: 6px 10px;
+                                margin-bottom: 6px;
+                            ">
+                                <strong>{i+1}. {label} ({total_slides}){badge}</strong>
+                            </div>
+                            """,
                             unsafe_allow_html=True,
                         )
                     
+                    # 🎯 Light highlight for buttons
+                    button_bg = "#eff6ff" if is_current else "transparent"
+                    
                     with row_col2:
+                        st.markdown(
+                            f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>",
+                            unsafe_allow_html=True
+                        )
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["pending_setlist_load"] = i
                             st.rerun()
-                            st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col3:
+                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↑", key=f"up_{i}") and i > 0:
-                            st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
-                                st.session_state["setlist"][i],
-                                st.session_state["setlist"][i - 1],
-                            )
-                            st.session_state["ppt_data"] = None
-                            st.session_state["preview_images"] = None
-                            st.session_state["current_song_preview_images"] = None
-                    
-                            current_edit = st.session_state.get("editing_setlist_index")
-                            if current_edit == i:
-                                st.session_state["editing_setlist_index"] = i - 1
-                            elif current_edit == i - 1:
-                                st.session_state["editing_setlist_index"] = i
-                    
-                            st.rerun()
+                            ...
+                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col4:
+                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
-                            st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
-                                st.session_state["setlist"][i],
-                                st.session_state["setlist"][i + 1],
-                            )
-                            st.session_state["ppt_data"] = None
-                            st.session_state["preview_images"] = None
-                            st.session_state["current_song_preview_images"] = None
-                    
-                            current_edit = st.session_state.get("editing_setlist_index")
-                            if current_edit == i:
-                                st.session_state["editing_setlist_index"] = i + 1
-                            elif current_edit == i + 1:
-                                st.session_state["editing_setlist_index"] = i
-                    
-                            st.rerun()
+                            ...
+                        st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col5:
+                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("🗑", key=f"delete_{i}"):
                             remove_index = i
-    
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
             if remove_index is not None:
                 st.session_state["setlist"].pop(remove_index)
                 st.session_state["ppt_data"] = None
