@@ -946,13 +946,14 @@ with st.container(height=380):
                 st.session_state["reset_editor_pending"] = True
                 st.session_state["preview_mode"] = "song"
                 st.session_state["preview_mode_radio"] = "🎵 Song"
+                st.session_state.pop("setlist_selected_index", None)
                 st.rerun()
         
             if not st.session_state["setlist"]:
                 st.info("No songs added yet.")
             else:
                 # =========================
-                # SELECT SONG
+                # BUILD OPTIONS
                 # =========================
                 options = []
                 for i, song in enumerate(st.session_state["setlist"]):
@@ -965,16 +966,48 @@ with st.container(height=380):
                 editing_index = st.session_state.get("editing_setlist_index")
                 default_index = editing_index if editing_index is not None and editing_index < len(options) else 0
         
-                st.markdown("**Select Song**")
-                selected_label = st.selectbox(
-                    "Songs in setlist",
-                    options,
-                    index=default_index,
-                    key="setlist_selector",
-                    label_visibility="collapsed",
+                if "setlist_selected_index" not in st.session_state:
+                    st.session_state["setlist_selected_index"] = default_index
+        
+                # keep index valid
+                st.session_state["setlist_selected_index"] = max(
+                    0,
+                    min(st.session_state["setlist_selected_index"], len(options) - 1)
                 )
         
-                selected_index = options.index(selected_label)
+                # =========================
+                # SELECTED SONG (NO DROPDOWN)
+                # =========================
+                st.markdown("**Selected Song**")
+        
+                selector_col1, selector_col2, selector_col3 = st.columns([1, 4, 1])
+        
+                with selector_col1:
+                    if (
+                        st.button("◀", key="setlist_prev", use_container_width=True)
+                        and st.session_state["setlist_selected_index"] > 0
+                    ):
+                        st.session_state["setlist_selected_index"] -= 1
+                        st.rerun()
+        
+                with selector_col2:
+                    st.text_input(
+                        "Selected song",
+                        value=options[st.session_state["setlist_selected_index"]],
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key="setlist_selected_display",
+                    )
+        
+                with selector_col3:
+                    if (
+                        st.button("▶", key="setlist_next", use_container_width=True)
+                        and st.session_state["setlist_selected_index"] < len(options) - 1
+                    ):
+                        st.session_state["setlist_selected_index"] += 1
+                        st.rerun()
+        
+                selected_index = st.session_state["setlist_selected_index"]
         
                 # =========================
                 # ACTION BUTTONS
@@ -1016,6 +1049,7 @@ with st.container(height=380):
                         elif editing_index == selected_index - 1:
                             st.session_state["editing_setlist_index"] = selected_index
         
+                        st.session_state["setlist_selected_index"] = selected_index - 1
                         st.rerun()
         
                 with action_col4:
@@ -1033,6 +1067,7 @@ with st.container(height=380):
                         elif editing_index == selected_index + 1:
                             st.session_state["editing_setlist_index"] = selected_index
         
+                        st.session_state["setlist_selected_index"] = selected_index + 1
                         st.rerun()
         
                 with action_col5:
@@ -1054,6 +1089,13 @@ with st.container(height=380):
                             st.session_state["pending_setlist_load"] = None
                         elif pending is not None and pending > selected_index:
                             st.session_state["pending_setlist_load"] = pending - 1
+        
+                        if st.session_state["setlist"]:
+                            st.session_state["setlist_selected_index"] = min(
+                                selected_index, len(st.session_state["setlist"]) - 1
+                            )
+                        else:
+                            st.session_state.pop("setlist_selected_index", None)
         
                         st.rerun()
         
