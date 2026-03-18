@@ -1071,8 +1071,8 @@ with st.container():
 
     st.session_state["last_editor_text"] = editor_text
 
-        if st.session_state["editor_status_message"]:
-            st.caption(st.session_state["editor_status_message"])
+    if st.session_state["editor_status_message"]:
+        st.caption(st.session_state["editor_status_message"])
 
     if st.button("Refresh Current Song Preview"):
         if selected_template_bytes is None:
