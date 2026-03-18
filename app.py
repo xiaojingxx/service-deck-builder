@@ -879,7 +879,25 @@ with st.container():
                     st.info("No matching titles found.")
 
     with setlist_col:
-        st.subheader("Current Setlist")
+        header_col1, header_col2 = st.columns([3, 1])
+    
+        with header_col1:
+            st.subheader("Current Setlist")
+    
+        with header_col2:
+            clear_setlist_clicked = st.button("Clear Setlist", use_container_width=True)
+
+        if clear_setlist_clicked:
+            st.session_state["setlist"] = []
+            st.session_state["ppt_data"] = None
+            st.session_state["preview_images"] = None
+            st.session_state["current_song_preview_images"] = None
+            st.session_state["service_preview_images"] = None
+            st.session_state["editing_setlist_index"] = None
+            st.session_state["pending_setlist_load"] = None
+            st.session_state["reset_editor_pending"] = True
+            st.session_state["preview_mode"] = "song"
+            st.rerun()
     
         if st.session_state["setlist"]:
             remove_index = None
@@ -970,43 +988,7 @@ with st.container():
                     st.session_state["pending_setlist_load"] = pending - 1
     
                 st.rerun()
-    
-            col1, col2 = st.columns(2)
-    
-            if col1.button("Generate Service Preview"):
-                if selected_template_bytes is None:
-                    st.error("Please upload and select a template first.")
-                elif not selected_template_ok:
-                    st.error("Cannot generate preview because the selected template is invalid.")
-                else:
-                    try:
-                        ppt_data = create_combined_ppt(
-                            st.session_state["setlist"],
-                            selected_template_bytes,
-                        )
-            
-                        st.session_state["ppt_data"] = ppt_data
-            
-                        # ✅ NEW: generate images for service preview
-                        service_images = pptx_to_preview_images(ppt_data)
-                        st.session_state["service_preview_images"] = service_images
-            
-                        # ✅ switch preview mode
-                        st.session_state["preview_mode"] = "service"
-            
-                        st.success("Service preview generated.")
-                    except Exception as e:
-                        st.error(f"Preview generation failed: {e}")
-    
-            if col2.button("Clear Setlist"):
-                st.session_state["setlist"] = []
-                st.session_state["ppt_data"] = None
-                st.session_state["preview_images"] = None
-                st.session_state["current_song_preview_images"] = None
-                st.session_state["editing_setlist_index"] = None
-                st.session_state["pending_setlist_load"] = None
-                st.session_state["reset_editor_pending"] = True
-                st.rerun()
+
     
             if st.session_state["ppt_data"] is not None:
                 download_data = (
