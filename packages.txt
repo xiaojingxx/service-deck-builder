@@ -1,1 +1,4 @@
 libreoffice
+libreoffice-impress
+fonts-dejavu-core
+fonts-liberation
