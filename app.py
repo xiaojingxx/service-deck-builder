@@ -506,9 +506,10 @@ def load_song_into_editor_from_repository(match):
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["current_preview_slide"] = 1
+    st.session_state["last_detected_edit_line"] = None
     st.session_state["editor_ace_key"] += 1
-    st.session_state["refresh_preview_after_load"] = True
 
+    # Generate current-song preview immediately on load
     if (
         st.session_state.get("selected_template_name")
         and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
@@ -521,9 +522,27 @@ def load_song_into_editor_from_repository(match):
             template_ok, _, _ = validate_template_bytes(template_bytes)
 
             if template_ok:
-                current_slides = get_current_slides(new_text)
+                current_slides = (
+                    split_slides_by_line_count_with_verse_separators(
+                        new_text,
+                        lines_per_slide=st.session_state["lines_per_slide"],
+                    )
+                    if st.session_state["auto_split_by_lines"]
+                    else split_slides(new_text)
+                )
+
                 if current_slides:
-                    song_item = build_editor_song_item(current_slides)
+                    song_item = {
+                        "umh_number": st.session_state["editor_umh"].strip(),
+                        "title": st.session_state["editor_title"].strip(),
+                        "slides": current_slides,
+                        "title_font_size_pt": None,
+                        "lyrics_font_size_pt": None,
+                        "line_spacing": None,
+                        "override_title_font_size": False,
+                        "override_lyrics_font_size": False,
+                        "override_line_spacing": False,
+                    }
                     refresh_current_song_preview(song_item, template_bytes)
                     st.session_state["editor_status_message"] = "Current-song preview refreshed."
         except Exception as e:
@@ -795,6 +814,7 @@ with st.container():
                     if match:
                         load_song_into_editor_from_repository(match)
                         st.success("Hymn loaded.")
+                        st.rerun()
                     else:
                         st.error("Hymn not found.")
 
@@ -815,6 +835,7 @@ with st.container():
                         match = matches[chosen_index]
                         load_song_into_editor_from_repository(match)
                         st.success("Hymn loaded.")
+                        st.rerun()
                 else:
                     st.info("No matching titles found.")
 
@@ -1007,22 +1028,6 @@ with st.container():
         st.session_state["editor_text"] = editor_text
 
         current_slides = get_current_slides(editor_text)
-
-        if st.session_state.get("refresh_preview_after_load"):
-            if (
-                selected_template_bytes is not None
-                and selected_template_ok
-                and soffice_available()
-                and current_slides
-            ):
-                try:
-                    song_item = build_editor_song_item(current_slides)
-                    refresh_current_song_preview(song_item, selected_template_bytes)
-                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
-                except Exception as e:
-                    st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
-
-            st.session_state["refresh_preview_after_load"] = False
 
         if st.session_state["auto_split_by_lines"]:
             st.caption(
