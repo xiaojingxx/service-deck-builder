@@ -1073,20 +1073,32 @@ with st.container():
         separator_added = blank_separator_added(old_text, editor_text)
 
         if text_changed and separator_added:
-            target_line_index = detect_new_slide_target_line(old_text, editor_text)
+            old_slides = get_current_slides(old_text)
+            new_slides = get_current_slides(editor_text)
 
-            detected_slide = get_slide_number_from_line_index(
-                editor_text,
-                target_line_index,
-                st.session_state["auto_split_by_lines"],
-                st.session_state["lines_per_slide"],
-            )
+            st.session_state["last_detected_edit_line"] = None
 
-            st.session_state["last_detected_edit_line"] = target_line_index
+            if not st.session_state["auto_split_by_lines"]:
+                # Manual mode: blank line creates a new slide boundary,
+                # so jump to the first newly shifted/new slide.
+                if len(new_slides) >= len(old_slides):
+                    st.session_state["current_preview_slide"] = min(len(old_slides) + 1, len(new_slides))
+            else:
+                # Auto-split mode: keep the older line-based detection
+                target_line_index = detect_new_slide_target_line(old_text, editor_text)
 
-            if detected_slide is not None:
-                st.session_state["current_preview_slide"] = detected_slide
+                detected_slide = get_slide_number_from_line_index(
+                    editor_text,
+                    target_line_index,
+                    st.session_state["auto_split_by_lines"],
+                    st.session_state["lines_per_slide"],
+                )
 
+                st.session_state["last_detected_edit_line"] = target_line_index
+
+                if detected_slide is not None:
+                    st.session_state["current_preview_slide"] = detected_slide
+        
         should_refresh_preview = (
             text_changed
             and selected_template_bytes is not None
