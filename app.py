@@ -1275,10 +1275,12 @@ colA, colB = st.columns(2)
 with colA:
     if st.button("🎵 Song", use_container_width=True):
         st.session_state["preview_mode"] = "song"
+        st.rerun()
 
 with colB:
     if st.button("📜 Service", use_container_width=True):
         st.session_state["preview_mode"] = "service"
+        st.rerun()
 
 with preview_col:
 
