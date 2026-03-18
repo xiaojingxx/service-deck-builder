@@ -1281,38 +1281,45 @@ preview_mode = st.radio(
 st.session_state["preview_mode"] = "song" if preview_mode == "Song" else "service"
 
 with preview_col:
+    # =========================
+    # PREVIEW MODE TOGGLE (TOP)
+    # =========================
+    preview_mode = st.radio(
+        "",
+        ["🎵 Song", "📜 Service"],
+        horizontal=True,
+    )
 
-    preview_mode = st.session_state.get("preview_mode", "song")
+    st.session_state["preview_mode"] = (
+        "song" if "Song" in preview_mode else "service"
+    )
 
-    if preview_mode == "service":
+    # =========================
+    # HEADER
+    # =========================
+    if st.session_state["preview_mode"] == "service":
         st.subheader("Service Preview")
         st.caption("📜 Full Service Deck")
     else:
         st.subheader("Current Song Preview")
         st.caption("🎵 Editing Current Song")
-   #
-    old_slides_dbg = get_current_slides(old_text)
-    new_slides_dbg = get_current_slides(editor_text)
 
-    st.caption(
-        f"Slides: {len(new_slides_dbg)} | "
-        f"Active slide: {st.session_state.get('current_preview_slide')}"
-    )
-
-    #
-    if preview_mode == "service":
+    # =========================
+    # SELECT DATA
+    # =========================
+    if st.session_state["preview_mode"] == "service":
         preview_images = st.session_state.get("service_preview_images")
     else:
         preview_images = st.session_state.get("current_song_preview_images")
 
-    if preview_images is not None and len(preview_images) > 0:
+    # =========================
+    # RENDER
+    # =========================
+    if preview_images:
         render_scrollable_images(
             preview_images,
             height=600,
             active_slide=st.session_state.get("current_preview_slide"),
         )
     else:
-        if preview_mode == "service":
-            st.info("Generate service preview to view the full deck.")
-        else:
-            st.info("Preview will appear when you load or edit a song.")
+        st.info("Preview will appear here.")
