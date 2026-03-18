@@ -1075,12 +1075,6 @@ with st.container():
                     if hasattr(st.session_state["ppt_data"], "getvalue")
                     else st.session_state["ppt_data"]
                 )
-                st.download_button(
-                    label="Download Service PowerPoint",
-                    data=download_data,
-                    file_name="service_deck.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                )
         else:
             st.info("No songs added yet.")
 
