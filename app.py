@@ -780,6 +780,10 @@ def get_slide_number_from_line_index(
 def blank_separator_added(old_text: str, new_text: str) -> bool:
     return new_text.count("\n\n") > old_text.count("\n\n")
 
+def slides_changed(old_text: str, new_text: str) -> bool:
+    return get_current_slides(old_text) != get_current_slides(new_text)
+
+
 # Must happen before widgets are created
 apply_pending_setlist_load()
 
@@ -1154,12 +1158,13 @@ with st.container():
         )
 
         text_changed = editor_text != old_text
-        old_slide_count = len(get_current_slides(old_text))
-        new_slide_count = len(current_slides)
-        slide_count_has_changed = old_slide_count != new_slide_count
-        separator_added = blank_separator_added(old_text, editor_text)
+        old_slides = get_current_slides(old_text)
+        new_slides = current_slides
+        slides_structure_changed = old_slides != new_slides
+        old_slide_count = len(old_slides)
+        new_slide_count = len(new_slides)
 
-        if text_changed and (slide_count_has_changed or separator_added):
+        if text_changed and slides_structure_changed:
             target_line_index = detect_new_slide_target_line(old_text, editor_text)
 
             detected_slide = get_slide_number_from_line_index(
@@ -1174,13 +1179,11 @@ with st.container():
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
             elif new_slide_count > 0:
-                if st.session_state.get("current_preview_slide") is None:
+                current_active = st.session_state.get("current_preview_slide")
+                if current_active is None:
                     st.session_state["current_preview_slide"] = 1
                 else:
-                    st.session_state["current_preview_slide"] = min(
-                        st.session_state["current_preview_slide"],
-                        new_slide_count
-                    )
+                    st.session_state["current_preview_slide"] = min(current_active, new_slide_count)
 
         should_refresh_preview = (
             text_changed
@@ -1189,7 +1192,7 @@ with st.container():
             and soffice_available()
             and bool(current_slides)
             and (
-                (st.session_state["refresh_on_new_line"] and (slide_count_has_changed or separator_added))
+                (st.session_state["refresh_on_new_line"] and slides_structure_changed)
                 or (not st.session_state["refresh_on_new_line"])
             )
             and new_signature != st.session_state.get("last_current_song_signature")
@@ -1201,7 +1204,7 @@ with st.container():
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
                     f"Slides: {old_slide_count} → {new_slide_count}. "
-                    f"Separator added: {separator_added}. "
+                    f"Slides changed: {slides_structure_changed}. "
                     f"Active slide: {st.session_state.get('current_preview_slide')}"
                 )
             except Exception as e:
