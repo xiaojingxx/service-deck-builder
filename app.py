@@ -748,100 +748,9 @@ with st.sidebar:
     st.header("Controls")
 
     # -------------------------
-    # TEMPLATE
-    # -------------------------
-    with st.expander("1. Template", expanded=False):
-        uploaded_templates = st.file_uploader(
-            "Upload template(s)",
-            type=["pptx"],
-            accept_multiple_files=True,
-            key="template_uploader",
-        )
-
-        if uploaded_templates:
-            for file in uploaded_templates:
-                st.session_state["uploaded_templates"][file.name] = file.getvalue()
-
-        template_names = list(st.session_state["uploaded_templates"].keys())
-
-        if template_names:
-            default_index = 0
-            if st.session_state["selected_template_name"] in template_names:
-                default_index = template_names.index(st.session_state["selected_template_name"])
-
-            st.session_state["selected_template_name"] = st.selectbox(
-                "Select template",
-                template_names,
-                index=default_index,
-            )
-
-            selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
-
-            if selected_template_ok:
-                st.success("Template valid")
-            else:
-                st.error("Template invalid")
-                for err in selected_template_errors:
-                    st.write(f"- {err}")
-
-            if selected_template_warnings:
-                for warn in selected_template_warnings:
-                    st.warning(warn)
-
-            if st.button("Remove selected template", use_container_width=True):
-                del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
-                st.session_state["selected_template_name"] = None
-                st.rerun()
-        else:
-            st.info("Upload at least one template.")
-
-        if not soffice_available():
-            st.warning("LibreOffice/soffice is not available.")
-
-    # -------------------------
-    # LOAD SONG
-    # -------------------------
-    with st.expander("2. Load Song", expanded=False):
-        if st.button("Start New Song", use_container_width=True):
-            st.session_state["reset_editor_pending"] = True
-            st.rerun()
-
-        load_mode = st.radio("Find hymn by", ["UMH Number", "Title"], horizontal=True)
-
-        if load_mode == "UMH Number":
-            umh_number_input = st.text_input("UMH Number", placeholder="e.g. 57")
-            if st.button("Load by Number", use_container_width=True):
-                if umh_number_input.strip():
-                    match = find_row_by_umh(umh_number_input)
-                    if match:
-                        load_song_into_editor(match)
-                        st.success("Hymn loaded.")
-                        st.rerun()
-                    else:
-                        st.error("Hymn not found.")
-        else:
-            keyword = st.text_input("Search title", placeholder="e.g. thousand tongues")
-            matches = search_titles(keyword) if keyword.strip() else []
-
-            if matches:
-                options = [
-                    f'UMH {row.get("UMH Number","")} - {row.get("Title","")}'
-                    for row in matches
-                ]
-                selected = st.selectbox("Select hymn", options)
-
-                if st.button("Load by Title", use_container_width=True):
-                    chosen_index = options.index(selected)
-                    load_song_into_editor(matches[chosen_index])
-                    st.success("Hymn loaded.")
-                    st.rerun()
-            elif keyword.strip():
-                st.info("No matching titles found.")
-
-    # -------------------------
     # SETLIST
     # -------------------------
-    with st.expander("3. Setlist", expanded=True):
+    with st.expander("1. Setlist", expanded=True):
         setlist = st.session_state["setlist"]
 
         if st.button("Clear Setlist", use_container_width=True):
@@ -917,7 +826,106 @@ with st.sidebar:
                 else:
                     st.write(f"{prefix}{i+1}. {song['title']}{edit_tag}")
 
+            if st.session_state.get("ppt_data") is not None:
+                st.download_button(
+                    label="Download Service PowerPoint",
+                    data=st.session_state["ppt_data"].getvalue(),
+                    file_name="service_deck.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    use_container_width=True,
+                )
 
+    # -------------------------
+    # TEMPLATE
+    # -------------------------
+    with st.expander("2. Template", expanded=True):
+        uploaded_templates = st.file_uploader(
+            "Upload template(s)",
+            type=["pptx"],
+            accept_multiple_files=True,
+            key="template_uploader",
+        )
+
+        if uploaded_templates:
+            for file in uploaded_templates:
+                st.session_state["uploaded_templates"][file.name] = file.getvalue()
+
+        template_names = list(st.session_state["uploaded_templates"].keys())
+
+        if template_names:
+            default_index = 0
+            if st.session_state["selected_template_name"] in template_names:
+                default_index = template_names.index(st.session_state["selected_template_name"])
+
+            st.session_state["selected_template_name"] = st.selectbox(
+                "Select template",
+                template_names,
+                index=default_index,
+            )
+
+            selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
+
+            if selected_template_ok:
+                st.success("Template valid")
+            else:
+                st.error("Template invalid")
+                for err in selected_template_errors:
+                    st.write(f"- {err}")
+
+            if selected_template_warnings:
+                for warn in selected_template_warnings:
+                    st.warning(warn)
+
+            if st.button("Remove selected template", use_container_width=True):
+                del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
+                st.session_state["selected_template_name"] = None
+                st.rerun()
+        else:
+            st.info("Upload at least one template.")
+
+        if not soffice_available():
+            st.warning("LibreOffice/soffice is not available.")
+
+    # -------------------------
+    # LOAD SONG
+    # -------------------------
+    with st.expander("3. Load Song", expanded=True):
+        if st.button("Start New Song", use_container_width=True):
+            st.session_state["reset_editor_pending"] = True
+            st.rerun()
+
+        load_mode = st.radio("Find hymn by", ["UMH Number", "Title"], horizontal=True)
+
+        if load_mode == "UMH Number":
+            umh_number_input = st.text_input("UMH Number", placeholder="e.g. 57")
+            if st.button("Load by Number", use_container_width=True):
+                if umh_number_input.strip():
+                    match = find_row_by_umh(umh_number_input)
+                    if match:
+                        load_song_into_editor(match)
+                        st.success("Hymn loaded.")
+                        st.rerun()
+                    else:
+                        st.error("Hymn not found.")
+        else:
+            keyword = st.text_input("Search title", placeholder="e.g. thousand tongues")
+            matches = search_titles(keyword) if keyword.strip() else []
+
+            if matches:
+                options = [
+                    f'UMH {row.get("UMH Number","")} - {row.get("Title","")}'
+                    for row in matches
+                ]
+                selected = st.selectbox("Select hymn", options)
+
+                if st.button("Load by Title", use_container_width=True):
+                    chosen_index = options.index(selected)
+                    load_song_into_editor(matches[chosen_index])
+                    st.success("Hymn loaded.")
+                    st.rerun()
+            elif keyword.strip():
+                st.info("No matching titles found.")
+                
 # =========================================================
 # MAIN LAYOUT
 # =========================================================
