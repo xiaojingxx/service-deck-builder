@@ -621,7 +621,7 @@ def apply_pending_setlist_load():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
-    st.session_state["current_preview_slide"] = None
+    st.session_state["current_preview_slide"] = 1
 
 
 def reset_editor_for_new_song():
@@ -769,6 +769,7 @@ def get_service_song_start_slides(setlist):
 
     return starts
 
+
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
@@ -776,6 +777,7 @@ def refresh_service_preview(setlist, template_bytes):
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
     st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
+
 
 # Must happen before widgets are created
 apply_pending_setlist_load()
