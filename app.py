@@ -1002,7 +1002,7 @@ with st.container():
         )
 
         st.checkbox(
-            "Refresh current-song preview only when a blank line separator is added",
+            "Refresh current-song preview only when slide count changes",
             key="refresh_on_new_line"
         )
 
@@ -1091,76 +1091,50 @@ with st.container():
             st.session_state.get("selected_template_name"),
         )
 
-    text_changed = editor_text != old_text
-    new_line_added = should_refresh_on_new_line(old_text, editor_text)
-    new_blank_line_added = blank_line_added(old_text, editor_text)
-    slide_count_has_changed = slide_count_changed(old_text, editor_text)
-    
-if text_changed and slide_count_has_changed:
-    edited_line_index = detect_changed_line_index(old_text, editor_text)
-    target_line_index = edited_line_index
+        text_changed = editor_text != old_text
+        slide_count_has_changed = len(get_current_slides(old_text)) != len(current_slides)
 
-    if blank_line_added(old_text, editor_text):
-        next_line_index = get_next_nonblank_line_index(editor_text, edited_line_index)
-        if next_line_index is not None:
-            target_line_index = next_line_index
-
-    detected_slide = get_slide_number_from_line_index(
-        editor_text,
-        target_line_index,
-        st.session_state["auto_split_by_lines"],
-        st.session_state["lines_per_slide"],
-    )
-
-    st.session_state["last_detected_edit_line"] = edited_line_index
-
-    if detected_slide is not None:
-        st.session_state["current_preview_slide"] = detected_slide
-            
-    if st.session_state.get("current_preview_slide") is None and current_slides:
-        st.session_state["current_preview_slide"] = 1
-    
-    should_refresh_preview = (
-        text_changed
-        and selected_template_bytes is not None
-        and selected_template_ok
-        and soffice_available()
-        and bool(current_slides)
-        and (
-            (st.session_state["refresh_on_new_line"] and slide_count_has_changed)
-            or (not st.session_state["refresh_on_new_line"])
+        should_refresh_preview = (
+            text_changed
+            and selected_template_bytes is not None
+            and selected_template_ok
+            and soffice_available()
+            and bool(current_slides)
+            and (
+                (st.session_state["refresh_on_new_line"] and slide_count_has_changed)
+                or (not st.session_state["refresh_on_new_line"])
+            )
+            and new_signature != st.session_state.get("last_current_song_signature")
         )
-        and new_signature != st.session_state.get("last_current_song_signature")
-    )
 
-    if should_refresh_preview:
-        try:
-            refresh_current_song_preview(song_item, selected_template_bytes)
-            st.session_state["editor_status_message"] = "Current-song preview refreshed."
-        except Exception as e:
-            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
-
-    st.session_state["last_editor_text"] = editor_text
-
-    if st.session_state["editor_status_message"]:
-        st.caption(st.session_state["editor_status_message"])
-
-    if st.button("Refresh Current Song Preview"):
-        if selected_template_bytes is None:
-            st.error("Please upload and select a template first.")
-        elif not selected_template_ok:
-            st.error("Cannot preview because the selected template is invalid.")
-        elif not soffice_available():
-            st.error("LibreOffice/soffice is not available.")
-        elif not current_slides:
-            st.error("No slides to preview.")
-        else:
+        if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = "Current-song preview refreshed."
-                st.rerun()
             except Exception as e:
-                st.error(f"Preview generation failed: {e}")
+                st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+
+        st.session_state["last_editor_text"] = editor_text
+
+        if st.session_state["editor_status_message"]:
+            st.caption(st.session_state["editor_status_message"])
+
+        if st.button("Refresh Current Song Preview"):
+            if selected_template_bytes is None:
+                st.error("Please upload and select a template first.")
+            elif not selected_template_ok:
+                st.error("Cannot preview because the selected template is invalid.")
+            elif not soffice_available():
+                st.error("LibreOffice/soffice is not available.")
+            elif not current_slides:
+                st.error("No slides to preview.")
+            else:
+                try:
+                    refresh_current_song_preview(song_item, selected_template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Preview generation failed: {e}")
 
         allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
@@ -1216,19 +1190,15 @@ if text_changed and slide_count_has_changed:
 
     with preview_col:
         st.subheader("Current Song Preview")
-        st.write("Preview status:", st.session_state.get("editor_status_message"))
 
         if st.session_state.get("current_song_preview_images"):
             render_scrollable_images(
                 st.session_state["current_song_preview_images"],
-                height=800,
+                height=600,
                 active_slide=st.session_state.get("current_preview_slide"),
             )
         else:
             st.info(
-                "The current-song preview will refresh when you add a new blank line, "
-                "or you can click 'Refresh Current Song Preview'."
+                "The current-song preview will appear here after a hymn is loaded or refreshed."
             )
-        
-
 
