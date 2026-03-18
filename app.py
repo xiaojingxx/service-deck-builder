@@ -63,9 +63,9 @@ defaults = {
     "loaded_song": None,
     "ppt_data": None,
     "preview_images": None,
+    "current_song_preview_images": None,
     "current_preview_slide": None,
     "last_detected_edit_line": None,
-    "current_song_preview_images": None,
     "editing_setlist_index": None,
     "pending_setlist_load": None,
     "uploaded_templates": {},
@@ -78,8 +78,8 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
-    "refresh_preview_after_load": False
 }
+
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -402,7 +402,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
 
     html += "</div>"
     st.components.v1.html(html, height=height, scrolling=False)
-
+    
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state.get("editor_umh", "").strip(),
@@ -441,11 +441,6 @@ def build_current_song_signature(song_item, selected_template_name):
         st.session_state.get("auto_split_by_lines"),
         st.session_state.get("lines_per_slide"),
     )
-
-
-def should_refresh_on_new_line(old_text: str, new_text: str) -> bool:
-    return new_text.count("\n") > old_text.count("\n")
-
 
 def refresh_current_song_preview(song_item, template_bytes):
     ppt_data = create_single_song_ppt(song_item, template_bytes)
@@ -488,7 +483,6 @@ def load_song_into_editor_from_repository(match):
     st.session_state["last_detected_edit_line"] = None
     st.session_state["editor_ace_key"] += 1
 
-    # Generate current-song preview immediately on load
     if (
         st.session_state.get("selected_template_name")
         and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
@@ -501,14 +495,7 @@ def load_song_into_editor_from_repository(match):
             template_ok, _, _ = validate_template_bytes(template_bytes)
 
             if template_ok:
-                current_slides = (
-                    split_slides_by_line_count_with_verse_separators(
-                        new_text,
-                        lines_per_slide=st.session_state["lines_per_slide"],
-                    )
-                    if st.session_state["auto_split_by_lines"]
-                    else split_slides(new_text)
-                )
+                current_slides = get_current_slides(new_text)
 
                 if current_slides:
                     song_item = {
@@ -526,7 +513,7 @@ def load_song_into_editor_from_repository(match):
                     st.session_state["editor_status_message"] = "Current-song preview refreshed."
         except Exception as e:
             st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
-
+    
 def apply_pending_setlist_load():
     pending = st.session_state.get("pending_setlist_load")
     if pending is None:
@@ -602,101 +589,6 @@ def reset_editor_for_new_song():
     st.session_state["editor_ace_key"] += 1
     st.session_state["current_preview_slide"] = None
 
-def detect_changed_line_index(old_text: str, new_text: str):
-    old_lines = old_text.splitlines()
-    new_lines = new_text.splitlines()
-
-    min_len = min(len(old_lines), len(new_lines))
-
-    for i in range(min_len):
-        if old_lines[i] != new_lines[i]:
-            return i
-
-    if len(new_lines) > len(old_lines):
-        return len(old_lines)
-
-    return None
-
-
-def get_slide_number_from_line_index(
-    text: str,
-    line_index: int,
-    auto_split: bool,
-    lines_per_slide: int
-):
-    if line_index is None:
-        return None
-
-    lines = text.splitlines()
-
-    if auto_split:
-        current_verse_line_indexes = []
-        line_to_slide = {}
-        slide_num = 1
-
-        for idx, raw_line in enumerate(lines):
-            stripped = raw_line.strip()
-
-            if stripped == "":
-                if current_verse_line_indexes:
-                    for j in range(0, len(current_verse_line_indexes), lines_per_slide):
-                        chunk = current_verse_line_indexes[j:j + lines_per_slide]
-                        for original_idx in chunk:
-                            line_to_slide[original_idx] = slide_num
-                        slide_num += 1
-                    current_verse_line_indexes = []
-            else:
-                current_verse_line_indexes.append(idx)
-
-        if current_verse_line_indexes:
-            for j in range(0, len(current_verse_line_indexes), lines_per_slide):
-                chunk = current_verse_line_indexes[j:j + lines_per_slide]
-                for original_idx in chunk:
-                    line_to_slide[original_idx] = slide_num
-                slide_num += 1
-
-        return line_to_slide.get(line_index)
-
-    slide_num = 1
-    in_slide = False
-
-    for idx, raw_line in enumerate(lines):
-        stripped = raw_line.strip()
-
-        if stripped == "":
-            if in_slide:
-                slide_num += 1
-                in_slide = False
-        else:
-            in_slide = True
-            if idx == line_index:
-                return slide_num
-
-    return None
-
-def count_blank_lines(text: str) -> int:
-    return sum(1 for line in text.splitlines() if line.strip() == "")
-
-def blank_line_added(old_text: str, new_text: str) -> bool:
-    return count_blank_lines(new_text) > count_blank_lines(old_text)
-
-def slide_count_changed(old_text: str, new_text: str) -> bool:
-    old_slides = get_current_slides(old_text)
-    new_slides = get_current_slides(new_text)
-    return len(new_slides) != len(old_slides)
-
-def get_next_nonblank_line_index(text: str, line_index: int):
-    lines = text.splitlines()
-
-    if line_index is None:
-        return None
-
-    for i in range(line_index + 1, len(lines)):
-        if lines[i].strip() != "":
-            return i
-
-    return None
-
 def detect_new_slide_target_line(old_text: str, new_text: str):
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
@@ -721,6 +613,7 @@ def detect_new_slide_target_line(old_text: str, new_text: str):
 
     return changed_idx
 
+
 def get_slide_number_from_line_index(
     text: str,
     line_index: int,
@@ -776,14 +669,6 @@ def get_slide_number_from_line_index(
                 return slide_num
 
     return None
-
-def blank_separator_added(old_text: str, new_text: str) -> bool:
-    return new_text.count("\n\n") > old_text.count("\n\n")
-
-def slides_changed(old_text: str, new_text: str) -> bool:
-    return get_current_slides(old_text) != get_current_slides(new_text)
-
-
 # Must happen before widgets are created
 apply_pending_setlist_load()
 
@@ -1055,20 +940,10 @@ with st.container():
 
         st.markdown("#### Slide Splitting")
 
+        st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
+        st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
         st.checkbox(
-            "Auto split by lines per slide",
-            key="auto_split_by_lines"
-        )
-
-        st.slider(
-            "Lines per slide",
-            min_value=1,
-            max_value=8,
-            key="lines_per_slide"
-        )
-
-        st.checkbox(
-            "Refresh current-song preview only when slide count changes",
+            "Refresh current-song preview only when slide structure changes",
             key="refresh_on_new_line"
         )
 
@@ -1108,46 +983,21 @@ with st.container():
 
         st.markdown("#### Song Formatting")
 
-        st.checkbox(
-            "Override title font size for this song",
-            key="editor_override_title_font_size"
-        )
+        st.checkbox("Override title font size for this song", key="editor_override_title_font_size")
         if st.session_state["editor_override_title_font_size"]:
-            st.slider(
-                "Title font size (pt)",
-                min_value=12,
-                max_value=60,
-                key="editor_title_font_size_pt"
-            )
+            st.slider("Title font size (pt)", min_value=12, max_value=60, key="editor_title_font_size_pt")
         else:
             st.caption("Title font size: using template default")
 
-        st.checkbox(
-            "Override lyrics font size for this song",
-            key="editor_override_lyrics_font_size"
-        )
+        st.checkbox("Override lyrics font size for this song", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
-            st.slider(
-                "Lyrics font size (pt)",
-                min_value=12,
-                max_value=60,
-                key="editor_lyrics_font_size_pt"
-            )
+            st.slider("Lyrics font size (pt)", min_value=12, max_value=60, key="editor_lyrics_font_size_pt")
         else:
             st.caption("Lyrics font size: using template default")
 
-        st.checkbox(
-            "Override line spacing for this song",
-            key="editor_override_line_spacing"
-        )
+        st.checkbox("Override line spacing for this song", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
-            st.slider(
-                "Line spacing",
-                min_value=0.8,
-                max_value=2.0,
-                step=0.1,
-                key="editor_line_spacing"
-            )
+            st.slider("Line spacing", min_value=0.8, max_value=2.0, step=0.1, key="editor_line_spacing")
         else:
             st.caption("Line spacing: using template default")
 
@@ -1180,10 +1030,7 @@ with st.container():
                 st.session_state["current_preview_slide"] = detected_slide
             elif new_slide_count > 0:
                 current_active = st.session_state.get("current_preview_slide")
-                if current_active is None:
-                    st.session_state["current_preview_slide"] = 1
-                else:
-                    st.session_state["current_preview_slide"] = min(current_active, new_slide_count)
+                st.session_state["current_preview_slide"] = 1 if current_active is None else min(current_active, new_slide_count)
 
         should_refresh_preview = (
             text_changed
@@ -1211,7 +1058,7 @@ with st.container():
                 st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
         st.session_state["last_editor_text"] = editor_text
-        
+
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
@@ -1257,9 +1104,7 @@ with st.container():
                     )
 
                     if duplicate_index is not None and not allow_duplicates:
-                        st.warning(
-                            f"This song is already in the setlist as item #{duplicate_index + 1}."
-                        )
+                        st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                     else:
                         st.session_state["setlist"].append(item)
                         st.session_state["ppt_data"] = None
@@ -1289,14 +1134,16 @@ with st.container():
 
         st.caption(
             f"Old slides: {old_slide_count} | New slides: {new_slide_count} | "
-            f"Slide count changed: {slide_count_has_changed} | "
+            f"Slides changed: {slides_structure_changed} | "
             f"Active slide: {st.session_state.get('current_preview_slide')} | "
             f"Target line: {st.session_state.get('last_detected_edit_line')}"
         )
 
-        if st.session_state.get("current_song_preview_images"):
+        preview_images = st.session_state.get("current_song_preview_images")
+
+        if preview_images is not None and len(preview_images) > 0:
             render_scrollable_images(
-                st.session_state["current_song_preview_images"],
+                preview_images,
                 height=600,
                 active_slide=st.session_state.get("current_preview_slide"),
             )
@@ -1304,4 +1151,3 @@ with st.container():
             st.info(
                 "The current-song preview will appear here after a hymn is loaded or refreshed."
             )
-
