@@ -825,7 +825,7 @@ with st.container():
 # ROW 3 — SONG EDITOR | CURRENT SONG PREVIEW
 # =========================
 with st.container():
-    editor_col, preview_col = st.columns([1.2, 1])
+    editor_col, preview_col = st.columns([1.1, 1], vertical_alignment="top")
 
     with editor_col:
         st.subheader("Song Editor")
