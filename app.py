@@ -901,7 +901,7 @@ with st.container():
 # =========================
 # ROW 2 — LOAD SONG | CURRENT SETLIST
 # =========================
-with st.container():
+with st.container(height=420):
     load_col, setlist_col = st.columns([1.2, 1], vertical_alignment="top")
 
     with load_col:
@@ -971,7 +971,7 @@ with st.container():
         if st.session_state["setlist"]:
             remove_index = None
     
-            setlist_container = st.container(height=420)
+            setlist_container = st.container(height=375)
     
             with setlist_container:
                 for i, song in enumerate(st.session_state["setlist"]):
