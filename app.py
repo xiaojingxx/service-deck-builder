@@ -379,6 +379,7 @@ def render_scrollable_images(images, height=760):
         padding: 12px;
         border-radius: 8px;
         background: #fafafa;
+        box-sizing: border-box;
     ">
     """
     for i, img_bytes in enumerate(images, start=1):
@@ -386,11 +387,11 @@ def render_scrollable_images(images, height=760):
         html += f"""
         <div style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
-            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc;" />
+            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc; display: block;" />
         </div>
         """
     html += "</div>"
-    st.components.v1.html(html, height=height + 20, scrolling=False)
+    st.components.v1.html(html, height=height, scrolling=True)
 
 
 def build_editor_song_item(current_slides):
@@ -1022,18 +1023,10 @@ with right_col:
     if st.session_state.get("current_song_preview_images"):
         render_scrollable_images(
             st.session_state["current_song_preview_images"],
-            height=360
+            height=500
         )
     else:
         st.info(
             "The current-song preview will refresh when you add a new line, "
             "or you can click 'Refresh Current Song Preview'."
         )
-
-    st.markdown("---")
-    st.subheader("PowerPoint Preview")
-
-    if st.session_state["preview_images"]:
-        render_scrollable_images(st.session_state["preview_images"])
-    else:
-        st.info("Generate the service preview to see the slide images.")
