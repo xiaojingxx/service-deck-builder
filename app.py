@@ -1215,7 +1215,7 @@ if text_changed and slide_count_has_changed:
         if st.session_state.get("current_song_preview_images"):
             render_scrollable_images(
                 st.session_state["current_song_preview_images"],
-                height=600,
+                height=800,
                 active_slide=st.session_state.get("current_preview_slide"),
             )
         else:
