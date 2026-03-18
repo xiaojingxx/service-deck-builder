@@ -627,8 +627,21 @@ def reset_editor_for_new_song():
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
     st.session_state["current_preview_slide"] = None
+
 def blank_separator_added(old_text: str, new_text: str) -> bool:
-    return new_text.count("\n\n") > old_text.count("\n\n")
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+
+    # detect any new empty line
+    if len(new_lines) > len(old_lines):
+        for i in range(len(new_lines)):
+            if i >= len(old_lines):
+                if new_lines[i].strip() == "":
+                    return True
+            elif old_lines[i] != new_lines[i] and new_lines[i].strip() == "":
+                return True
+
+    return False
 
 
 def detect_new_slide_target_line(old_text: str, new_text: str):
@@ -1000,7 +1013,7 @@ with st.container():
             tab_size=2,
             wrap=True,
             show_gutter=False,
-            auto_update=False,
+            auto_update= True,
             readonly=False,
             height=420,
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
