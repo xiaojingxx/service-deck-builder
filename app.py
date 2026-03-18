@@ -82,6 +82,7 @@ defaults = {
     "editor_ace_key": 0,
     "preview_mode": "song",
     "service_preview_images": None,
+    "service_song_start_slides": [],
 }
 
 for k, v in defaults.items():
@@ -758,6 +759,24 @@ def get_first_new_blank_separator_index(old_text: str, new_text: str):
 
     return None
 
+def get_service_song_start_slides(setlist):
+    starts = []
+    slide_counter = 1
+
+    for song in setlist:
+        starts.append(slide_counter)
+        slide_counter += len(song["slides"])
+
+    return starts
+
+def refresh_service_preview(setlist, template_bytes):
+    ppt_data = create_combined_ppt(setlist, template_bytes)
+    preview_images = pptx_to_preview_images(ppt_data)
+
+    st.session_state["ppt_data"] = ppt_data
+    st.session_state["service_preview_images"] = preview_images
+    st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
+
 # Must happen before widgets are created
 apply_pending_setlist_load()
 
@@ -949,7 +968,7 @@ with st.container():
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["preview_mode"] = "song"
                             st.session_state["pending_setlist_load"] = i
-                            st.rerun()
+                            st.rerun(
                     
                     with row_col3:
                         if st.button("↑", key=f"up_{i}") and i > 0:
@@ -1256,9 +1275,6 @@ with st.container():
             st.rerun()
 
 with preview_col:
-    # =========================
-    # PREVIEW MODE TOGGLE (TOP)
-    # =========================
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
@@ -1266,35 +1282,27 @@ with preview_col:
         horizontal=True,
     )
     
-    st.session_state["preview_mode"] = (
-        "song" if "Song" in preview_mode_label else "service"
-    )
-    # =========================
-    # HEADER
-    # =========================
-    if st.session_state["preview_mode"] == "service":
-        st.subheader("Service Preview")
-        st.caption("📜 Full Service Deck")
-    else:
-        st.subheader("Current Song Preview")
-        st.caption("🎵 Editing Current Song")
-
-    # =========================
-    # SELECT DATA
-    # =========================
-    if st.session_state["preview_mode"] == "service":
-        preview_images = st.session_state.get("service_preview_images")
-    else:
-        preview_images = st.session_state.get("current_song_preview_images")
-
-    # =========================
-    # RENDER
-    # =========================
-    if preview_images:
-        render_scrollable_images(
-            preview_images,
-            height=600,
-            active_slide=st.session_state.get("current_preview_slide"),
-        )
-    else:
-        st.info("Preview will appear here.")
+    new_preview_mode = "song" if "Song" in preview_mode_label else "service"
+    
+    if new_preview_mode != st.session_state.get("preview_mode"):
+        st.session_state["preview_mode"] = new_preview_mode
+    
+        if new_preview_mode == "service":
+            if selected_template_bytes is None:
+                st.error("Please upload and select a template first.")
+            elif not selected_template_ok:
+                st.error("Cannot preview because the selected template is invalid.")
+            elif not soffice_available():
+                st.error("LibreOffice/soffice is not available.")
+            elif not st.session_state["setlist"]:
+                st.info("Add songs to the setlist to view service preview.")
+            else:
+                try:
+                    refresh_service_preview(
+                        st.session_state["setlist"],
+                        selected_template_bytes,
+                    )
+                    if st.session_state.get("current_preview_slide") is None:
+                        st.session_state["current_preview_slide"] = 1
+                except Exception as e:
+                    st.error(f"Service preview generation failed: {e}")
