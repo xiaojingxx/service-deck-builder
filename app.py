@@ -727,6 +727,19 @@ def get_slide_number_from_line_index(
 
     return None
 
+def get_first_new_blank_separator_index(old_text: str, new_text: str):
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+
+    old_blank_positions = [i for i, line in enumerate(old_lines) if line.strip() == ""]
+    new_blank_positions = [i for i, line in enumerate(new_lines) if line.strip() == ""]
+
+    for pos in new_blank_positions:
+        if pos not in old_blank_positions:
+            return pos
+
+    return None
+
 # Must happen before widgets are created
 apply_pending_setlist_load()
 
@@ -1073,29 +1086,47 @@ with st.container():
         else:
             trigger_refresh = blank_separator_added(old_text, editor_text)
 
-        if text_changed and trigger_refresh:
-            old_slides = get_current_slides(old_text)
-            new_slides = get_current_slides(editor_text)
-
-            st.session_state["last_detected_edit_line"] = None
-
-            if not st.session_state["auto_split_by_lines"]:
-                if len(new_slides) >= len(old_slides):
-                    st.session_state["current_preview_slide"] = min(len(old_slides) + 1, len(new_slides))
-            else:
-                target_line_index = detect_new_slide_target_line(old_text, editor_text)
-
+    if text_changed and trigger_refresh:
+        st.session_state["last_detected_edit_line"] = None
+    
+        if not st.session_state["auto_split_by_lines"]:
+            blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
+    
+            if blank_idx is not None:
+                # move to first non-blank line after inserted separator
+                lines = editor_text.splitlines()
+                target_line_index = None
+    
+                for i in range(blank_idx + 1, len(lines)):
+                    if lines[i].strip() != "":
+                        target_line_index = i
+                        break
+    
+                st.session_state["last_detected_edit_line"] = target_line_index
+    
                 detected_slide = get_slide_number_from_line_index(
                     editor_text,
                     target_line_index,
-                    st.session_state["auto_split_by_lines"],
-                    st.session_state["lines_per_slide"],
+                    auto_split=False,
+                    lines_per_slide=st.session_state["lines_per_slide"],
                 )
-
-                st.session_state["last_detected_edit_line"] = target_line_index
-
+    
                 if detected_slide is not None:
                     st.session_state["current_preview_slide"] = detected_slide
+        else:
+            target_line_index = detect_new_slide_target_line(old_text, editor_text)
+    
+            detected_slide = get_slide_number_from_line_index(
+                editor_text,
+                target_line_index,
+                st.session_state["auto_split_by_lines"],
+                st.session_state["lines_per_slide"],
+            )
+    
+            st.session_state["last_detected_edit_line"] = target_line_index
+    
+            if detected_slide is not None:
+                st.session_state["current_preview_slide"] = detected_slide
 
         should_refresh_preview = (
             text_changed
