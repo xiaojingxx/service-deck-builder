@@ -751,72 +751,35 @@ with st.sidebar:
     # STATIC SETLIST ORDER (always visible)
     # =====================================================
     st.markdown("### Setlist Order")
-
-    if not st.session_state["setlist"]:
+    
+    setlist = st.session_state["setlist"]
+    
+    if not setlist:
         st.caption("No songs added yet.")
     else:
         selected_index = st.session_state.get("setlist_selected_index", 0)
         editing_index = st.session_state.get("editing_setlist_index")
-
-        selected_index = max(
-            0,
-            min(selected_index, len(st.session_state["setlist"]) - 1)
-        )
+    
+        selected_index = max(0, min(selected_index, len(setlist) - 1))
         st.session_state["setlist_selected_index"] = selected_index
-
-        order_lines = []
-
-        for i, song in enumerate(st.session_state["setlist"]):
+    
+        for i, song in enumerate(setlist):
             is_selected = i == selected_index
             is_editing = i == editing_index
-
+    
             if song["umh_number"]:
                 label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
             else:
                 label = f'{i+1}. {song["title"]}'
-
-            suffix = " ✏️" if is_editing else ""
-
+    
             if is_selected:
-                order_lines.append(f"""
-                <div id="sidebar-setlist-current-item" style="
-                    background:#eff6ff;
-                    border:1px solid #bfdbfe;
-                    border-radius:6px;
-                    padding:6px 8px;
-                    margin-bottom:6px;
-                    font-weight:600;
-                    font-size:0.92rem;
-                ">
-                    🔹 {label}{suffix}
-                </div>
-                """)
+                st.markdown(f"🔹 **{label}**")
             else:
-                order_lines.append(f"""
-                <div style="
-                    padding:4px 8px;
-                    margin-bottom:4px;
-                    font-size:0.9rem;
-                ">
-                    {label}{suffix}
-                </div>
-                """)
-
-        sidebar_setlist_html = f"""
-        <div style="
-            border:1px solid #e5e7eb;
-            border-radius:8px;
-            padding:10px;
-            background:#ffffff;
-            max-height:220px;
-            overflow-y:auto;
-        ">
-            {''.join(order_lines)}
-        </div>
-        """
-
-        st.markdown(sidebar_setlist_html, unsafe_allow_html=True)
-
+                st.markdown(label)
+    
+            if is_editing:
+                st.caption("✏️ Editing")
+    
     st.divider()
 
     # -------------------------
