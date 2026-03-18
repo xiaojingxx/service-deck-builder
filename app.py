@@ -278,11 +278,6 @@ def build_editor_song_item(current_slides):
         "umh_number": st.session_state["editor_umh"].strip(),
         "title": st.session_state["editor_title"].strip(),
         "slides": current_slides,
-        "title_font_size_pt": (
-            st.session_state["editor_title_font_size_pt"]
-            if st.session_state["editor_override_title_font_size"]
-            else None
-        ),
         "lyrics_font_size_pt": (
             st.session_state["editor_lyrics_font_size_pt"]
             if st.session_state["editor_override_lyrics_font_size"]
@@ -293,7 +288,6 @@ def build_editor_song_item(current_slides):
             if st.session_state["editor_override_line_spacing"]
             else None
         ),
-        "override_title_font_size": st.session_state["editor_override_title_font_size"],
         "override_lyrics_font_size": st.session_state["editor_override_lyrics_font_size"],
         "override_line_spacing": st.session_state["editor_override_line_spacing"],
     }
@@ -312,7 +306,6 @@ def build_current_song_signature(song_item, selected_template_name):
         st.session_state["lines_per_slide"],
     )
 
-
 def create_combined_ppt(setlist, template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
@@ -329,7 +322,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         title = str(song["title"]).strip()
         slides = song["slides"]
 
-        title_font_size_pt = song.get("title_font_size_pt")
         lyrics_font_size_pt = song.get("lyrics_font_size_pt")
         line_spacing = song.get("line_spacing")
 
@@ -343,8 +335,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                 set_shape_text(
                     slide.shapes.title,
                     full_title,
-                    font_size_pt=title_font_size_pt,
-                    line_spacing=line_spacing,
+                    font_size_pt=None,  # use template default
+                    line_spacing=None,
                 )
                 set_shape_text(
                     get_body_placeholder(slide),
@@ -496,10 +488,8 @@ def reset_editor():
     st.session_state["editor_umh"] = ""
     st.session_state["editor_title"] = ""
     st.session_state["editor_text"] = ""
-    st.session_state["editor_override_title_font_size"] = False
     st.session_state["editor_override_lyrics_font_size"] = False
     st.session_state["editor_override_line_spacing"] = False
-    st.session_state["editor_title_font_size_pt"] = 28
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
     st.session_state["current_song_preview_images"] = None
@@ -1182,21 +1172,9 @@ with main_left:
 
     st.markdown("#### Song Formatting")
 
-    fmt_col1, fmt_col2, fmt_col3 = st.columns(3)
+    fmt_col1, fmt_col2 = st.columns(2)
 
     with fmt_col1:
-        st.checkbox("Override title font size", key="editor_override_title_font_size")
-        if st.session_state["editor_override_title_font_size"]:
-            st.slider(
-                "Title font size (pt)",
-                min_value=12,
-                max_value=60,
-                key="editor_title_font_size_pt",
-            )
-        else:
-            st.caption("Using template title size")
-
-    with fmt_col2:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
             st.slider(
@@ -1208,7 +1186,7 @@ with main_left:
         else:
             st.caption("Using template lyrics size")
 
-    with fmt_col3:
+    with fmt_col2:
         st.checkbox("Override line spacing", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
             st.slider(
