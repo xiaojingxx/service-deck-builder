@@ -1007,8 +1007,8 @@ with st.container():
         )
 
         if editor_text != old_text:
-        st.session_state["editor_text"] = editor_text
-        st.session_state["text_changed_flag"] = True
+            st.session_state["editor_text"] = editor_text
+            st.session_state["text_changed_flag"] = True
 
         if st.session_state.get("text_changed_flag"):
             st.session_state["text_changed_flag"] = False
