@@ -901,7 +901,7 @@ with st.container():
 # =========================
 # ROW 2 — LOAD SONG | CURRENT SETLIST
 # =========================
-with st.container(height=400):
+with st.container(height=380):
     load_col, setlist_col = st.columns([1.2, 1], vertical_alignment="top")
 
     with load_col:
