@@ -377,7 +377,7 @@ def pptx_to_preview_images(pptx_bytes):
         return images
 
 def render_scrollable_images(images, height=760, active_slide=None):
-    container_id = "current-song-scroll-container"
+    container_id = f"preview-scroll-container-{len(images)}"
     active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
