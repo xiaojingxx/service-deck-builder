@@ -1169,7 +1169,8 @@ with st.container():
         if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
-                st.session_state["preview_mode"] = "song"
+                if st.session_state.get("preview_mode") != "service":
+                    st.session_state["preview_mode"] = "song"
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
                     f"Trigger refresh: {trigger_refresh}. "
