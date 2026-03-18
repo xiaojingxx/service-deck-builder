@@ -823,6 +823,7 @@ def refresh_service_preview(setlist, template_bytes):
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
+    st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
 
 
 # Must happen before widgets are created
@@ -993,23 +994,23 @@ with st.container():
                         bg = "#eff6ff" if is_current else "#ffffff"
                         border = "2px solid #dbeafe" if is_current else "1px solid #e5e7eb"
                     
-                        st.markdown(
-                            f"""
-                            <div style="
-                                background: {bg};
-                                border: {border};
-                                border-radius: 8px;
-                                padding: 6px 10px;
-                                margin-bottom: 6px;
-                                white-space: nowrap;
-                                overflow: hidden;
-                                text-overflow: ellipsis;
-                            ">
-                                <strong>{i+1}. {label} ({total_slides})</strong>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                        if st.button(
+                            f"{i+1}. {label} ({total_slides})",
+                            key=f"jump_{i}",
+                            use_container_width=True
+                        ):
+                            # 👉 switch to service mode
+                            st.session_state["preview_mode"] = "service"
+                            st.session_state["preview_mode_radio"] = "📜 Service"
+                    
+                            # 👉 scroll to that song
+                            starts = st.session_state.get("service_song_start_slides", [])
+                            if i < len(starts):
+                                st.session_state["current_preview_slide"] = starts[i]
+                            else:
+                                st.session_state["current_preview_slide"] = 1  # fallback
+                    
+                            st.rerun()
                     
                     # Buttons
                     with row_col2:
@@ -1401,3 +1402,6 @@ with preview_col:
         )
     else:
         st.info("Preview will appear here.")
+
+    if st.session_state.get("current_preview_slide") is None:
+    st.session_state["current_preview_slide"] = 1
