@@ -816,11 +816,10 @@ def get_service_song_start_slides(setlist):
 
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
-
     preview_images = pptx_to_preview_images(ppt_data)
 
     if not preview_images:
-        raise RuntimeError("No preview images generated from PPT")
+        raise RuntimeError("No preview images generated from service PPT")
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
@@ -1331,9 +1330,6 @@ with st.container():
             st.rerun()
 
 with preview_col:
-    # =========================
-    # PREVIEW MODE
-    # =========================
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
@@ -1341,45 +1337,49 @@ with preview_col:
         horizontal=True,
         key="preview_mode_radio",
     )
-    
+
     selected_mode = "song" if "Song" in st.session_state["preview_mode_radio"] else "service"
     st.session_state["preview_mode"] = selected_mode
-    
-    # =========================
-    # SERVICE MODE
-    # =========================
+
+    preview_images = None
+
     if selected_mode == "service":
         st.subheader("Service Preview")
         st.caption("📜 Full Service Deck")
-    
+
         can_generate = (
-            selected_template_bytes
+            selected_template_bytes is not None
             and selected_template_ok
             and soffice_available()
-            and st.session_state["setlist"]
+            and len(st.session_state["setlist"]) > 0
         )
-    
-        # 🔥 ALWAYS try generate if missing
-        if not st.session_state.get("service_preview_images"):
+
+        if can_generate:
             try:
                 refresh_service_preview(
                     st.session_state["setlist"],
                     selected_template_bytes,
                 )
+                preview_images = st.session_state.get("service_preview_images")
             except Exception as e:
                 st.error(f"Service preview generation failed: {e}")
-    
-        # 🔍 DEBUG (temporary — helps you confirm)
-        # st.write("ppt_data:", st.session_state.get("ppt_data"))
-    
-        # ✅ SHOW DOWNLOAD IF ppt exists
+        else:
+            if selected_template_bytes is None:
+                st.info("Please upload and select a template first.")
+            elif not selected_template_ok:
+                st.info("Selected template is invalid.")
+            elif not soffice_available():
+                st.info("LibreOffice/soffice is not available.")
+            elif not st.session_state["setlist"]:
+                st.info("Add songs to the setlist to view the service preview.")
+
         if st.session_state.get("ppt_data") is not None:
             download_data = (
                 st.session_state["ppt_data"].getvalue()
                 if hasattr(st.session_state["ppt_data"], "getvalue")
                 else st.session_state["ppt_data"]
             )
-    
+
             st.download_button(
                 label="⬇️ Download Service PowerPoint",
                 data=download_data,
@@ -1387,9 +1387,17 @@ with preview_col:
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 use_container_width=True,
             )
-        elif can_generate:
-            st.warning("Generating service preview... try clicking Service again.")
-        else:
-            st.info("Add songs and ensure template is valid.")
-    
-        preview_images = st.session_state.get("service_preview_images")
+
+    else:
+        st.subheader("Current Song Preview")
+        st.caption("🎵 Editing Current Song")
+        preview_images = st.session_state.get("current_song_preview_images")
+
+    if preview_images is not None and len(preview_images) > 0:
+        render_scrollable_images(
+            preview_images,
+            height=600,
+            active_slide=st.session_state.get("current_preview_slide"),
+        )
+    else:
+        st.info("Preview will appear here.")
