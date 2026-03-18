@@ -1277,7 +1277,6 @@ with st.container():
             st.rerun()
 
 with preview_col:
-with preview_col:
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
