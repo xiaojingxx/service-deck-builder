@@ -924,7 +924,7 @@ with st.container(height=380):
                         st.rerun()
                 else:
                     st.info("No matching titles found.")
-
+    
         with setlist_col:
             header_col1, header_col2 = st.columns([3, 1])
         
@@ -965,6 +965,7 @@ with st.container(height=380):
                 current_edit = st.session_state.get("editing_setlist_index")
                 default_index = current_edit if current_edit is not None and current_edit < len(options) else 0
         
+                st.markdown("**Select Song**")
                 selected_label = st.selectbox(
                     "Songs in setlist",
                     options,
@@ -974,6 +975,7 @@ with st.container(height=380):
                 )
         
                 selected_index = options.index(selected_label)
+                editing_index = st.session_state.get("editing_setlist_index")
         
                 # =========================
                 # ACTION BUTTONS
@@ -1010,9 +1012,9 @@ with st.container(height=380):
                         st.session_state["service_preview_images"] = None
                         st.session_state["service_song_start_slides"] = []
         
-                        if current_edit == selected_index:
+                        if editing_index == selected_index:
                             st.session_state["editing_setlist_index"] = selected_index - 1
-                        elif current_edit == selected_index - 1:
+                        elif editing_index == selected_index - 1:
                             st.session_state["editing_setlist_index"] = selected_index
         
                         st.rerun()
@@ -1027,9 +1029,9 @@ with st.container(height=380):
                         st.session_state["service_preview_images"] = None
                         st.session_state["service_song_start_slides"] = []
         
-                        if current_edit == selected_index:
+                        if editing_index == selected_index:
                             st.session_state["editing_setlist_index"] = selected_index + 1
-                        elif current_edit == selected_index + 1:
+                        elif editing_index == selected_index + 1:
                             st.session_state["editing_setlist_index"] = selected_index
         
                         st.rerun()
@@ -1043,10 +1045,10 @@ with st.container(height=380):
                         st.session_state["service_preview_images"] = None
                         st.session_state["service_song_start_slides"] = []
         
-                        if current_edit == selected_index:
+                        if editing_index == selected_index:
                             st.session_state["reset_editor_pending"] = True
-                        elif current_edit is not None and current_edit > selected_index:
-                            st.session_state["editing_setlist_index"] = current_edit - 1
+                        elif editing_index is not None and editing_index > selected_index:
+                            st.session_state["editing_setlist_index"] = editing_index - 1
         
                         pending = st.session_state.get("pending_setlist_load")
                         if pending == selected_index:
@@ -1057,12 +1059,46 @@ with st.container(height=380):
                         st.rerun()
         
                 # =========================
+                # JUMP TO SONG
+                # =========================
+                st.markdown("**Jump to Song**")
+        
+                jump_options = []
+                for i, song in enumerate(st.session_state["setlist"]):
+                    if song["umh_number"]:
+                        jump_label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
+                    else:
+                        jump_label = f'{i+1}. {song["title"]}'
+                    jump_options.append(jump_label)
+        
+                jump_choice = st.selectbox(
+                    "Jump to song in service preview",
+                    jump_options,
+                    index=selected_index,
+                    key="jump_to_song_selector",
+                    label_visibility="collapsed",
+                )
+        
+                jump_index = jump_options.index(jump_choice)
+        
+                if st.button("Go", key="jump_to_song_go", use_container_width=True):
+                    st.session_state["preview_mode"] = "service"
+                    st.session_state["preview_mode_radio"] = "📜 Service"
+        
+                    starts = st.session_state.get("service_song_start_slides", [])
+                    if jump_index < len(starts):
+                        st.session_state["current_preview_slide"] = starts[jump_index]
+                    else:
+                        st.session_state["current_preview_slide"] = 1
+        
+                    st.rerun()
+        
+                # =========================
                 # SCROLLABLE ORDER VIEW
                 # =========================
                 st.markdown("**Setlist Order**")
         
                 order_lines = []
-                editing_index = st.session_state.get("editing_setlist_index")
         
                 for i, song in enumerate(st.session_state["setlist"]):
                     is_current = i == selected_index
