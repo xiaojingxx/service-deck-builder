@@ -63,6 +63,8 @@ defaults = {
     "loaded_song": None,
     "ppt_data": None,
     "preview_images": None,
+    "current_preview_slide": None,
+    "last_detected_edit_line": None,
     "current_song_preview_images": None,
     "editing_setlist_index": None,
     "pending_setlist_load": None,
@@ -369,9 +371,9 @@ def pptx_to_preview_images(pptx_bytes):
         return images
 
 
-def render_scrollable_images(images, height=760):
+def render_scrollable_images(images, height=760, active_slide=None):
     html = f"""
-    <div style="
+    <div id="preview-container" style="
         height: {height}px;
         overflow-y: auto;
         border: 1px solid #ddd;
@@ -381,16 +383,32 @@ def render_scrollable_images(images, height=760):
         box-sizing: border-box;
     ">
     """
+
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
+        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
+
         html += f"""
-        <div style="margin-bottom: 24px;">
+        <div id="slide-{i}" style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
-            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc; display: block;" />
+            <img src="data:image/png;base64,{b64}" style="width: 100%; border: {border}; display: block;" />
         </div>
         """
+
     html += "</div>"
+
+    if active_slide is not None:
+        html += f"""
+        <script>
+            const el = document.getElementById("slide-{active_slide}");
+            if (el) {{
+                el.scrollIntoView({{behavior: "smooth", block: "start"}});
+            }}
+        </script>
+        """
+
     st.components.v1.html(html, height=height, scrolling=True)
+
 
 
 def build_editor_song_item(current_slides):
@@ -475,6 +493,7 @@ def load_song_into_editor_from_repository(match):
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
+    st.session_state["current_preview_slide"] = None
 
     if (
         st.session_state.get("selected_template_name")
@@ -545,6 +564,7 @@ def apply_pending_setlist_load():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
+    st.session_state["current_preview_slide"] = None
 
 
 def reset_editor_for_new_song():
@@ -568,6 +588,80 @@ def reset_editor_for_new_song():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
+    st.session_state["current_preview_slide"] = None
+
+def detect_changed_line_index(old_text: str, new_text: str):
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+
+    min_len = min(len(old_lines), len(new_lines))
+
+    for i in range(min_len):
+        if old_lines[i] != new_lines[i]:
+            return i
+
+    if len(new_lines) > len(old_lines):
+        return len(old_lines)
+
+    return None
+
+
+def get_slide_number_from_line_index(
+    text: str,
+    line_index: int,
+    auto_split: bool,
+    lines_per_slide: int
+):
+    if line_index is None:
+        return None
+
+    lines = text.splitlines()
+
+    if auto_split:
+        current_verse_line_indexes = []
+        line_to_slide = {}
+        slide_num = 1
+
+        for idx, raw_line in enumerate(lines):
+            stripped = raw_line.strip()
+
+            if stripped == "":
+                if current_verse_line_indexes:
+                    for j in range(0, len(current_verse_line_indexes), lines_per_slide):
+                        chunk = current_verse_line_indexes[j:j + lines_per_slide]
+                        for original_idx in chunk:
+                            line_to_slide[original_idx] = slide_num
+                        slide_num += 1
+                    current_verse_line_indexes = []
+            else:
+                current_verse_line_indexes.append(idx)
+
+        if current_verse_line_indexes:
+            for j in range(0, len(current_verse_line_indexes), lines_per_slide):
+                chunk = current_verse_line_indexes[j:j + lines_per_slide]
+                for original_idx in chunk:
+                    line_to_slide[original_idx] = slide_num
+                slide_num += 1
+
+        return line_to_slide.get(line_index)
+
+    slide_num = 1
+    in_slide = False
+
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+
+        if stripped == "":
+            if in_slide:
+                slide_num += 1
+                in_slide = False
+        else:
+            in_slide = True
+            if idx == line_index:
+                return slide_num
+
+    return None
+
 
 
 # Must happen before widgets are created
@@ -941,21 +1035,32 @@ with st.container():
             st.session_state.get("selected_template_name"),
         )
 
-        text_changed = editor_text != old_text
-        new_line_added = should_refresh_on_new_line(old_text, editor_text)
-
-        should_refresh_preview = (
-            text_changed
-            and selected_template_bytes is not None
-            and selected_template_ok
-            and soffice_available()
-            and bool(current_slides)
-            and (
-                (st.session_state["refresh_on_new_line"] and new_line_added)
-                or (not st.session_state["refresh_on_new_line"])
-            )
-            and new_signature != st.session_state.get("last_current_song_signature")
+    text_changed = editor_text != old_text
+    new_line_added = should_refresh_on_new_line(old_text, editor_text)
+    
+    if text_changed and new_line_added:
+        edited_line_index = detect_changed_line_index(old_text, editor_text)
+        detected_slide = get_slide_number_from_line_index(
+            editor_text,
+            edited_line_index,
+            st.session_state["auto_split_by_lines"],
+            st.session_state["lines_per_slide"],
         )
+        st.session_state["last_detected_edit_line"] = edited_line_index
+        st.session_state["current_preview_slide"] = detected_slide
+    
+    should_refresh_preview = (
+        text_changed
+        and selected_template_bytes is not None
+        and selected_template_ok
+        and soffice_available()
+        and bool(current_slides)
+        and (
+            (st.session_state["refresh_on_new_line"] and new_line_added)
+            or (not st.session_state["refresh_on_new_line"])
+        )
+        and new_signature != st.session_state.get("last_current_song_signature")
+    )
 
         if should_refresh_preview:
             try:
@@ -1044,7 +1149,8 @@ with st.container():
         if st.session_state.get("current_song_preview_images"):
             render_scrollable_images(
                 st.session_state["current_song_preview_images"],
-                height=600
+                height=600,
+                active_slide=st.session_state.get("current_preview_slide"),
             )
         else:
             st.info(
