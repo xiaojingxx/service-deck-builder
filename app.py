@@ -374,30 +374,25 @@ def pptx_to_preview_images(pptx_bytes):
 
 def render_scrollable_images(images, height=760, active_slide=None):
     html = f"""
-    <div
-        id="preview-container"
-        style="
-            height: {height}px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            padding: 12px;
-            border-radius: 8px;
-            background: #fafafa;
-            box-sizing: border-box;
-        "
-    >
+    <div style="
+        height: {height}px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 12px;
+        border-radius: 8px;
+        background: #fafafa;
+        box-sizing: border-box;
+    ">
     """
 
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
+        badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
-        <div
-            id="slide-{i}"
-            style="margin-bottom: 24px;"
-        >
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
+        <div style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
             <img
                 src="data:image/png;base64,{b64}"
                 style="width: 100%; border: {border}; display: block;"
@@ -406,22 +401,6 @@ def render_scrollable_images(images, height=760, active_slide=None):
         """
 
     html += "</div>"
-
-    if active_slide is not None:
-        html += f"""
-        <script>
-            window.addEventListener("load", function() {{
-                const container = document.getElementById("preview-container");
-                const target = document.getElementById("slide-{active_slide}");
-
-                if (container && target) {{
-                    const top = target.offsetTop - container.offsetTop - 8;
-                    container.scrollTop = Math.max(0, top);
-                }}
-            }});
-        </script>
-        """
-
     st.components.v1.html(html, height=height, scrolling=False)
 
 def build_editor_song_item(current_slides):
@@ -717,6 +696,87 @@ def get_next_nonblank_line_index(text: str, line_index: int):
             return i
 
     return None
+
+def detect_new_slide_target_line(old_text: str, new_text: str):
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+
+    min_len = min(len(old_lines), len(new_lines))
+    changed_idx = None
+
+    for i in range(min_len):
+        if old_lines[i] != new_lines[i]:
+            changed_idx = i
+            break
+
+    if changed_idx is None:
+        if len(new_lines) > len(old_lines):
+            changed_idx = len(old_lines)
+        else:
+            return None
+
+    for j in range(changed_idx, len(new_lines)):
+        if new_lines[j].strip() != "":
+            return j
+
+    return changed_idx
+
+def get_slide_number_from_line_index(
+    text: str,
+    line_index: int,
+    auto_split: bool,
+    lines_per_slide: int
+):
+    if line_index is None:
+        return None
+
+    lines = text.splitlines()
+
+    if auto_split:
+        current_verse_line_indexes = []
+        line_to_slide = {}
+        slide_num = 1
+
+        for idx, raw_line in enumerate(lines):
+            stripped = raw_line.strip()
+
+            if stripped == "":
+                if current_verse_line_indexes:
+                    for j in range(0, len(current_verse_line_indexes), lines_per_slide):
+                        chunk = current_verse_line_indexes[j:j + lines_per_slide]
+                        for original_idx in chunk:
+                            line_to_slide[original_idx] = slide_num
+                        slide_num += 1
+                    current_verse_line_indexes = []
+            else:
+                current_verse_line_indexes.append(idx)
+
+        if current_verse_line_indexes:
+            for j in range(0, len(current_verse_line_indexes), lines_per_slide):
+                chunk = current_verse_line_indexes[j:j + lines_per_slide]
+                for original_idx in chunk:
+                    line_to_slide[original_idx] = slide_num
+                slide_num += 1
+
+        return line_to_slide.get(line_index)
+
+    slide_num = 1
+    in_slide = False
+
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+
+        if stripped == "":
+            if in_slide:
+                slide_num += 1
+                in_slide = False
+        else:
+            in_slide = True
+            if idx == line_index:
+                return slide_num
+
+    return None
+    
 
 # Must happen before widgets are created
 apply_pending_setlist_load()
@@ -1092,7 +1152,32 @@ with st.container():
         )
 
         text_changed = editor_text != old_text
-        slide_count_has_changed = len(get_current_slides(old_text)) != len(current_slides)
+        old_slide_count = len(get_current_slides(old_text))
+        new_slide_count = len(current_slides)
+        slide_count_has_changed = old_slide_count != new_slide_count
+
+        if text_changed and slide_count_has_changed:
+            target_line_index = detect_new_slide_target_line(old_text, editor_text)
+
+            detected_slide = get_slide_number_from_line_index(
+                editor_text,
+                target_line_index,
+                st.session_state["auto_split_by_lines"],
+                st.session_state["lines_per_slide"],
+            )
+
+            st.session_state["last_detected_edit_line"] = target_line_index
+
+            if detected_slide is not None:
+                st.session_state["current_preview_slide"] = detected_slide
+            elif new_slide_count > 0:
+                if st.session_state.get("current_preview_slide") is None:
+                    st.session_state["current_preview_slide"] = 1
+                else:
+                    st.session_state["current_preview_slide"] = min(
+                        st.session_state["current_preview_slide"],
+                        new_slide_count
+                    )
 
         should_refresh_preview = (
             text_changed
@@ -1110,12 +1195,15 @@ with st.container():
         if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
-                st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                st.session_state["editor_status_message"] = (
+                    f"Current-song preview refreshed. "
+                    f"Slides: {old_slide_count} → {new_slide_count}. "
+                    f"Active slide: {st.session_state.get('current_preview_slide')}"
+                )
             except Exception as e:
                 st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
         st.session_state["last_editor_text"] = editor_text
-
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
