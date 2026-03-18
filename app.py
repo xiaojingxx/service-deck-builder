@@ -978,6 +978,8 @@ with st.container():
                                 st.session_state["setlist"][i],
                                 st.session_state["setlist"][i - 1],
                             )
+                            st.session_state["service_preview_images"] = None
+                            st.session_state["service_song_start_slides"] = []
                             st.rerun()
                     
                     with row_col4:
@@ -986,6 +988,8 @@ with st.container():
                                 st.session_state["setlist"][i],
                                 st.session_state["setlist"][i + 1],
                             )
+                            st.session_state["service_preview_images"] = None
+                            st.session_state["service_song_start_slides"] = []
                             st.rerun()
                     
                     with row_col5:
@@ -997,6 +1001,8 @@ with st.container():
                 st.session_state["ppt_data"] = None
                 st.session_state["preview_images"] = None
                 st.session_state["current_song_preview_images"] = None
+                st.session_state["service_preview_images"] = None
+                st.session_state["service_song_start_slides"] = []
     
                 current_edit = st.session_state.get("editing_setlist_index")
                 if current_edit == remove_index:
@@ -1255,6 +1261,8 @@ with st.container():
                     else:
                         st.session_state["setlist"].append(item)
                         st.session_state["ppt_data"] = None
+                        st.session_state["service_preview_images"] = None
+                        st.session_state["service_song_start_slides"] = []
                         st.success(
                             f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                         )
@@ -1264,6 +1272,8 @@ with st.container():
                     st.session_state["setlist"][edit_idx] = item
                     st.session_state["editing_setlist_index"] = None
                     st.session_state["ppt_data"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
                     st.success(
                         f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                     )
