@@ -1023,7 +1023,7 @@ with right_col:
     if st.session_state.get("current_song_preview_images"):
         render_scrollable_images(
             st.session_state["current_song_preview_images"],
-            height=500
+            height=600
         )
     else:
         st.info(
