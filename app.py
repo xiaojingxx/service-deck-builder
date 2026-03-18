@@ -373,8 +373,10 @@ def pptx_to_preview_images(pptx_bytes):
 
 
 def render_scrollable_images(images, height=760, active_slide=None):
+    container_id = "scroll-container"
+
     html = f"""
-    <div style="
+    <div id="{container_id}" style="
         height: {height}px;
         overflow-y: auto;
         border: 1px solid #ddd;
@@ -391,8 +393,10 @@ def render_scrollable_images(images, height=760, active_slide=None):
         badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
-        <div style="margin-bottom: 24px;">
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
+        <div id="slide-{i}" style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">
+                Slide {i}{badge}
+            </div>
             <img
                 src="data:image/png;base64,{b64}"
                 style="width: 100%; border: {border}; display: block;"
@@ -401,6 +405,21 @@ def render_scrollable_images(images, height=760, active_slide=None):
         """
 
     html += "</div>"
+
+    # 🔥 Auto-scroll JS
+    if active_slide is not None:
+        html += f"""
+        <script>
+        const container = document.getElementById("{container_id}");
+        const target = document.getElementById("slide-{active_slide}");
+
+        if (container && target) {{
+            const offsetTop = target.offsetTop - container.offsetTop;
+            container.scrollTop = offsetTop - 20;  // padding
+        }}
+        </script>
+        """
+
     st.components.v1.html(html, height=height, scrolling=False)
     
 def build_editor_song_item(current_slides):
