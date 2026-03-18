@@ -71,7 +71,7 @@ defaults = {
     "uploaded_templates": {},
     "selected_template_name": None,
     "reset_editor_pending": False,
-    "auto_split_by_lines": True,
+    "auto_split_by_lines": False,
     "lines_per_slide": 4,
     "refresh_on_new_line": True,
     "last_editor_text": "",
@@ -1199,7 +1199,12 @@ with st.container():
     with preview_col:
         st.subheader("Current Song Preview")
 
+        old_slides_dbg = get_current_slides(old_text)
+        new_slides_dbg = get_current_slides(editor_text)
+        
         st.caption(
+            f"Old slides: {len(old_slides_dbg)} | "
+            f"New slides: {len(new_slides_dbg)} | "
             f"Active slide: {st.session_state.get('current_preview_slide')} | "
             f"Target line: {st.session_state.get('last_detected_edit_line')}"
         )
