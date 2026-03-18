@@ -1155,8 +1155,9 @@ with st.container():
         old_slide_count = len(get_current_slides(old_text))
         new_slide_count = len(current_slides)
         slide_count_has_changed = old_slide_count != new_slide_count
+        separator_added = blank_separator_added(old_text, editor_text)
 
-        if text_changed and slide_count_has_changed:
+        if text_changed and (slide_count_has_changed or separator_added):
             target_line_index = detect_new_slide_target_line(old_text, editor_text)
 
             detected_slide = get_slide_number_from_line_index(
@@ -1186,7 +1187,7 @@ with st.container():
             and soffice_available()
             and bool(current_slides)
             and (
-                (st.session_state["refresh_on_new_line"] and slide_count_has_changed)
+                (st.session_state["refresh_on_new_line"] and (slide_count_has_changed or separator_added))
                 or (not st.session_state["refresh_on_new_line"])
             )
             and new_signature != st.session_state.get("last_current_song_signature")
@@ -1198,12 +1199,14 @@ with st.container():
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
                     f"Slides: {old_slide_count} → {new_slide_count}. "
+                    f"Separator added: {separator_added}. "
                     f"Active slide: {st.session_state.get('current_preview_slide')}"
                 )
             except Exception as e:
                 st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
         st.session_state["last_editor_text"] = editor_text
+        
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
