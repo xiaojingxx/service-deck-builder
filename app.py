@@ -1032,13 +1032,9 @@ with st.container(height=380):
                 # SCROLLABLE ORDER VIEW
                 # =========================
                 st.markdown("**Setlist Order**")
-    
-                start = max(0, selected_index - 3)
-                end = min(len(st.session_state["setlist"]), selected_index + 4)
-    
                 order_lines = []
-    
-                for i in range(start, end):
+                
+                for i, song in enumerate(st.session_state["setlist"]):
                     song = st.session_state["setlist"][i]
                     is_current = i == selected_index
     
@@ -1067,47 +1063,19 @@ with st.container(height=380):
     </div>
     """)
     
-                above_text = (
-                    f"<div style='color:#6b7280; font-size:0.85rem;'>... {start} above</div>"
-                    if start > 0 else ""
-                )
-    
-                below_text = (
-                    f"<div style='color:#6b7280; font-size:0.85rem;'>... {len(st.session_state['setlist']) - end} below</div>"
-                    if end < len(st.session_state["setlist"]) else ""
-                )
     
                 html_block = f"""
-    <div id="setlist-order-box" style="
-        border:1px solid #e5e7eb;
-        border-radius:8px;
-        padding:10px;
-        background:#ffffff;
-        max-height:220px;
-        overflow-y:auto;
-        scroll-behavior:smooth;
-    ">
-        {above_text}
-        {''.join(order_lines)}
-        {below_text}
-    </div>
-    
-    <script>
-    const box = document.getElementById("setlist-order-box");
-    const key = "setlist-order-scroll";
-    
-    if (box) {{
-        const saved = sessionStorage.getItem(key);
-        if (saved !== null) {{
-            box.scrollTop = parseInt(saved, 10);
-        }}
-    
-        box.addEventListener("scroll", () => {{
-            sessionStorage.setItem(key, box.scrollTop);
-        }});
-    }}
-    </script>
-    """
+<div id="setlist-order-box" style="
+    border:1px solid #e5e7eb;
+    border-radius:8px;
+    padding:10px;
+    background:#ffffff;
+    max-height:220px;
+    overflow-y:auto;
+">
+    {''.join(order_lines)}
+</div>
+"""
     
                 st.markdown(html_block, unsafe_allow_html=True)
 # =========================
