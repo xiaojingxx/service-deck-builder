@@ -803,7 +803,7 @@ with st.sidebar:
                 """)
 
         sidebar_setlist_html = f"""
-        <div id="sidebar-setlist-order-box" style="
+        <div style="
             border:1px solid #e5e7eb;
             border-radius:8px;
             padding:10px;
@@ -813,16 +813,6 @@ with st.sidebar:
         ">
             {''.join(order_lines)}
         </div>
-
-        <script>
-        const box = document.getElementById("sidebar-setlist-order-box");
-        const current = document.getElementById("sidebar-setlist-current-item");
-
-        if (box && current) {{
-            const targetTop = current.offsetTop - (box.clientHeight / 2) + (current.clientHeight / 2);
-            box.scrollTop = Math.max(0, targetTop);
-        }}
-        </script>
         """
 
         st.markdown(sidebar_setlist_html, unsafe_allow_html=True)
