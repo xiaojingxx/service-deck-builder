@@ -1,26 +1,29 @@
-import html
+import os
+import base64
+import tempfile
+import subprocess
 from io import BytesIO
+from shutil import which
 
+import fitz  # PyMuPDF
 import streamlit as st
-from streamlit_ace import st_ace
 from pptx import Presentation
-from pptx.util import Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.util import Pt
 
+st.set_page_config(page_title="Live PPT Preview", layout="wide")
+st.title("Live PPT Preview with LibreOffice")
 
-st.set_page_config(page_title="Live PPT Editor", layout="wide")
-st.title("Live PPT Editor")
+SOFFICE_PATH = os.environ.get("SOFFICE_PATH", "soffice")
 
-# -----------------------------
-# Session state
-# -----------------------------
 defaults = {
     "editor_text": "",
     "last_text": "",
-    "refresh_on_enter_only": True,
-    "auto_split_by_lines": True,
+    "preview_images": None,
+    "ppt_bytes": None,
     "lines_per_slide": 4,
-    "preview_slides": [],
+    "auto_split_by_lines": True,
+    "refresh_on_new_line": True,
     "last_preview_reason": "Preview not generated yet.",
     "deck_title": "Live Service Deck",
 }
@@ -29,9 +32,12 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
+def soffice_available() -> bool:
+    if SOFFICE_PATH == "soffice":
+        return which("soffice") is not None
+    return os.path.exists(SOFFICE_PATH)
+
+
 def split_slides_manual(text: str) -> list[list[str]]:
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
@@ -77,70 +83,17 @@ def get_current_slides(text: str) -> list[list[str]]:
     return split_slides_manual(text)
 
 
-def should_refresh_preview(old_text: str, new_text: str, enter_only: bool) -> bool:
+def should_refresh_preview(old_text: str, new_text: str, refresh_on_new_line: bool) -> bool:
     if new_text == old_text:
         return False
-    if not enter_only:
+    if not refresh_on_new_line:
         return True
     return new_text.count("\n") > old_text.count("\n")
-
-
-def render_slide_preview_html(slides: list[list[str]]) -> str:
-    html_parts = [
-        """
-        <div style="
-            height: 760px;
-            overflow-y: auto;
-            padding: 8px;
-            background: #f7f7f7;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-        ">
-        """
-    ]
-
-    for i, slide in enumerate(slides, start=1):
-        lines_html = "".join(
-            f'<div style="margin: 0.35rem 0;">{html.escape(line)}</div>'
-            for line in slide
-        )
-        html_parts.append(
-            f"""
-            <div style="margin-bottom: 24px;">
-                <div style="font-weight: 600; margin: 0 0 8px 4px;">Slide {i}</div>
-                <div style="
-                    width: 100%;
-                    min-height: 220px;
-                    background: white;
-                    border: 1px solid #cfcfcf;
-                    border-radius: 10px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    text-align: center;
-                    padding: 24px;
-                    box-sizing: border-box;
-                    font-size: 26px;
-                    line-height: 1.4;
-                    font-family: Arial, sans-serif;
-                ">
-                    <div style="width: 100%;">
-                        {lines_html}
-                    </div>
-                </div>
-            </div>
-            """
-        )
-
-    html_parts.append("</div>")
-    return "".join(html_parts)
 
 
 def build_pptx(slides: list[list[str]], deck_title: str) -> BytesIO:
     prs = Presentation()
 
-    # Use default layout 5 (title only) if available, else layout 0
     try:
         title_layout = prs.slide_layouts[5]
     except IndexError:
@@ -149,16 +102,15 @@ def build_pptx(slides: list[list[str]], deck_title: str) -> BytesIO:
     for i, slide_lines in enumerate(slides):
         slide = prs.slides.add_slide(title_layout)
 
-        # Add title on first slide
         if i == 0 and slide.shapes.title is not None:
             slide.shapes.title.text = deck_title
 
-        # Add textbox for lyrics/content
-        left = top = Pt(40)
+        left = Pt(40)
+        top = Pt(70)
         width = Pt(640)
         height = Pt(360)
 
-        textbox = slide.shapes.add_textbox(left, top + Pt(40), width, height)
+        textbox = slide.shapes.add_textbox(left, top, width, height)
         tf = textbox.text_frame
         tf.clear()
         tf.word_wrap = True
@@ -176,47 +128,102 @@ def build_pptx(slides: list[list[str]], deck_title: str) -> BytesIO:
     return output
 
 
-# -----------------------------
-# Controls
-# -----------------------------
-c1, c2, c3 = st.columns([1, 1, 1])
+def pptx_to_preview_images(pptx_bytes: BytesIO) -> list[bytes]:
+    if not soffice_available():
+        raise RuntimeError("LibreOffice/soffice is not available.")
 
-with c1:
-    st.checkbox("Refresh only when Enter/new line is added", key="refresh_on_enter_only")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pptx_path = os.path.join(tmpdir, "preview.pptx")
+        with open(pptx_path, "wb") as f:
+            f.write(pptx_bytes.getvalue())
 
-with c2:
+        cmd = [
+            SOFFICE_PATH,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            tmpdir,
+            pptx_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise RuntimeError(f"LibreOffice conversion failed:\n{result.stderr}")
+
+        pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
+        if not pdf_files:
+            raise FileNotFoundError(
+                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
+            )
+
+        pdf_path = os.path.join(tmpdir, pdf_files[0])
+        doc = fitz.open(pdf_path)
+
+        images = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=150)
+            img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
+            pix.save(img_path)
+            with open(img_path, "rb") as f:
+                images.append(f.read())
+
+        doc.close()
+        return images
+
+
+def render_scrollable_images(images: list[bytes], height: int = 760) -> None:
+    html = f"""
+    <div style="
+        height: {height}px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 12px;
+        border-radius: 8px;
+        background: #fafafa;
+    ">
+    """
+    for i, img_bytes in enumerate(images, start=1):
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        html += f"""
+        <div style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
+            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc;" />
+        </div>
+        """
+    html += "</div>"
+    st.components.v1.html(html, height=height + 20, scrolling=False)
+
+
+controls1, controls2, controls3 = st.columns([1, 1, 1])
+
+with controls1:
+    st.checkbox("Refresh only when Enter/new line is added", key="refresh_on_new_line")
+
+with controls2:
     st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
 
-with c3:
+with controls3:
     st.slider("Lines per slide", 1, 8, key="lines_per_slide")
 
 st.text_input("Deck title", key="deck_title")
 
-# -----------------------------
-# Editor + preview
-# -----------------------------
+if not soffice_available():
+    st.warning(
+        "LibreOffice/soffice is not available yet. "
+        "If you are deploying on Streamlit Community Cloud, make sure you added packages.txt and redeployed."
+    )
+
 left, right = st.columns([1, 1.2])
 
 with left:
     st.subheader("Editable text")
 
-    new_text = st_ace(
+    new_text = st.text_area(
+        "Edit lyrics",
         value=st.session_state["editor_text"],
-        language="text",
-        theme="textmate",
-        keybinding="vscode",
-        font_size=16,
-        tab_size=2,
-        wrap=True,
-        show_gutter=False,
-        auto_update=True,
-        readonly=False,
         height=760,
-        key="lyrics_editor",
     )
-
-    if new_text is None:
-        new_text = st.session_state["editor_text"]
 
     old_text = st.session_state["last_text"]
     st.session_state["editor_text"] = new_text
@@ -224,49 +231,51 @@ with left:
     refresh_now = should_refresh_preview(
         old_text=old_text,
         new_text=new_text,
-        enter_only=st.session_state["refresh_on_enter_only"],
+        refresh_on_new_line=st.session_state["refresh_on_new_line"],
     )
 
     if refresh_now:
-        st.session_state["preview_slides"] = get_current_slides(new_text)
-        if st.session_state["refresh_on_enter_only"]:
-            st.session_state["last_preview_reason"] = "Preview refreshed because a new line was added."
-        else:
-            st.session_state["last_preview_reason"] = "Preview refreshed because text changed."
-
-    elif not st.session_state["preview_slides"] and new_text.strip():
-        st.session_state["preview_slides"] = get_current_slides(new_text)
-        st.session_state["last_preview_reason"] = "Initial preview generated."
+        slides = get_current_slides(new_text)
+        try:
+            ppt_bytes = build_pptx(slides, st.session_state["deck_title"])
+            preview_images = pptx_to_preview_images(ppt_bytes)
+            st.session_state["ppt_bytes"] = ppt_bytes
+            st.session_state["preview_images"] = preview_images
+            if st.session_state["refresh_on_new_line"]:
+                st.session_state["last_preview_reason"] = "Preview refreshed because a new line was added."
+            else:
+                st.session_state["last_preview_reason"] = "Preview refreshed because text changed."
+        except Exception as e:
+            st.session_state["last_preview_reason"] = f"Preview failed: {e}"
 
     st.session_state["last_text"] = new_text
 
-    st.caption(
-        "With the setting turned on, the preview refreshes only when the editor gains a new line."
-    )
+    if st.button("Force refresh preview"):
+        slides = get_current_slides(new_text)
+        try:
+            ppt_bytes = build_pptx(slides, st.session_state["deck_title"])
+            preview_images = pptx_to_preview_images(ppt_bytes)
+            st.session_state["ppt_bytes"] = ppt_bytes
+            st.session_state["preview_images"] = preview_images
+            st.session_state["last_preview_reason"] = "Preview refreshed manually."
+        except Exception as e:
+            st.session_state["last_preview_reason"] = f"Preview failed: {e}"
 
 with right:
-    st.subheader("Slide preview")
-    slides = st.session_state["preview_slides"]
-
-    st.caption(f"{len(slides)} slide(s)")
+    st.subheader("LibreOffice-rendered thumbnail preview")
     st.caption(st.session_state["last_preview_reason"])
 
-    preview_html = render_slide_preview_html(slides)
-    st.components.v1.html(preview_html, height=780, scrolling=False)
+    if st.session_state["preview_images"]:
+        render_scrollable_images(st.session_state["preview_images"], height=760)
+    else:
+        st.info("No preview yet.")
 
-# -----------------------------
-# Download PPTX
-# -----------------------------
 slides_for_export = get_current_slides(st.session_state["editor_text"])
-
 if slides_for_export:
-    pptx_data = build_pptx(slides_for_export, st.session_state["deck_title"])
+    ppt_bytes = build_pptx(slides_for_export, st.session_state["deck_title"])
     st.download_button(
         label="Download PowerPoint (.pptx)",
-        data=pptx_data,
+        data=ppt_bytes,
         file_name="live_service_deck.pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
-
-with st.expander("Current parsed slide data"):
-    st.json({"slides": slides_for_export})
