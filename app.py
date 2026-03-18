@@ -685,6 +685,17 @@ def slide_count_changed(old_text: str, new_text: str) -> bool:
     new_slides = get_current_slides(new_text)
     return len(new_slides) != len(old_slides)
 
+def get_next_nonblank_line_index(text: str, line_index: int):
+    lines = text.splitlines()
+
+    if line_index is None:
+        return None
+
+    for i in range(line_index + 1, len(lines)):
+        if lines[i].strip() != "":
+            return i
+
+    return None
 
 # Must happen before widgets are created
 apply_pending_setlist_load()
@@ -1062,18 +1073,26 @@ with st.container():
     new_blank_line_added = blank_line_added(old_text, editor_text)
     slide_count_has_changed = slide_count_changed(old_text, editor_text)
     
-    if text_changed and slide_count_has_changed:
-        edited_line_index = detect_changed_line_index(old_text, editor_text)
-        detected_slide = get_slide_number_from_line_index(
-            editor_text,
-            edited_line_index,
-            st.session_state["auto_split_by_lines"],
-            st.session_state["lines_per_slide"],
-        )
-        st.session_state["last_detected_edit_line"] = edited_line_index
+if text_changed and slide_count_has_changed:
+    edited_line_index = detect_changed_line_index(old_text, editor_text)
+    target_line_index = edited_line_index
 
-        if detected_slide is not None:
-            st.session_state["current_preview_slide"] = detected_slide
+    if blank_line_added(old_text, editor_text):
+        next_line_index = get_next_nonblank_line_index(editor_text, edited_line_index)
+        if next_line_index is not None:
+            target_line_index = next_line_index
+
+    detected_slide = get_slide_number_from_line_index(
+        editor_text,
+        target_line_index,
+        st.session_state["auto_split_by_lines"],
+        st.session_state["lines_per_slide"],
+    )
+
+    st.session_state["last_detected_edit_line"] = edited_line_index
+
+    if detected_slide is not None:
+        st.session_state["current_preview_slide"] = detected_slide
             
     if st.session_state.get("current_preview_slide") is None and current_slides:
         st.session_state["current_preview_slide"] = 1
