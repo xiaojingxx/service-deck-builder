@@ -1270,6 +1270,16 @@ with st.container():
             st.session_state["reset_editor_pending"] = True
             st.rerun()
 
+colA, colB = st.columns(2)
+
+with colA:
+    if st.button("🎵 Song", use_container_width=True):
+        st.session_state["preview_mode"] = "song"
+
+with colB:
+    if st.button("📜 Service", use_container_width=True):
+        st.session_state["preview_mode"] = "service"
+
 with preview_col:
 
     preview_mode = st.session_state.get("preview_mode", "song")
