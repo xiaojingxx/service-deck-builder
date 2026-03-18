@@ -410,13 +410,22 @@ def render_scrollable_images(images, height=760, active_slide=None):
     if active_slide is not None:
         html += f"""
         <script>
-        const container = document.getElementById("{container_id}");
-        const target = document.getElementById("slide-{active_slide}");
-
-        if (container && target) {{
-            const offsetTop = target.offsetTop - container.offsetTop;
-            container.scrollTop = offsetTop - 20;  // padding
+        function scrollToSlide() {{
+            const container = document.getElementById("{container_id}");
+            const target = document.getElementById("slide-{active_slide}");
+    
+            if (container && target) {{
+                const offsetTop = target.offsetTop - container.offsetTop;
+    
+                container.scrollTo({{
+                    top: offsetTop - 20,
+                    behavior: "smooth"
+                }});
+            }}
         }}
+    
+        // 🔥 wait for render
+        setTimeout(scrollToSlide, 200);
         </script>
         """
 
