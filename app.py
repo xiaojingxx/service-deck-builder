@@ -1042,6 +1042,7 @@ with st.container():
             st.rerun()
 
     with preview_col:
+        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
         st.subheader("Current Song Preview")
 
         if st.session_state.get("current_song_preview_images"):
