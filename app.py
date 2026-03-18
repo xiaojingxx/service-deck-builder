@@ -750,7 +750,7 @@ with st.sidebar:
     # -------------------------
     # TEMPLATE
     # -------------------------
-    with st.expander("1. Template", expanded=True):
+    with st.expander("1. Template", expanded=False):
         uploaded_templates = st.file_uploader(
             "Upload template(s)",
             type=["pptx"],
@@ -801,7 +801,7 @@ with st.sidebar:
     # -------------------------
     # LOAD SONG
     # -------------------------
-    with st.expander("2. Load Song", expanded=True):
+    with st.expander("2. Load Song", expanded=False):
         if st.button("Start New Song", use_container_width=True):
             st.session_state["reset_editor_pending"] = True
             st.rerun()
