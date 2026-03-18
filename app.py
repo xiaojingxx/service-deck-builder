@@ -1063,33 +1063,33 @@ with st.container():
     )
 
     if should_refresh_preview:
-            try:
-                refresh_current_song_preview(song_item, selected_template_bytes)
-                st.session_state["editor_status_message"] = "Current-song preview refreshed."
-            except Exception as e:
-                st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+        try:
+            refresh_current_song_preview(song_item, selected_template_bytes)
+            st.session_state["editor_status_message"] = "Current-song preview refreshed."
+        except Exception as e:
+            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
     st.session_state["last_editor_text"] = editor_text
 
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
-        if st.button("Refresh Current Song Preview"):
-            if selected_template_bytes is None:
-                st.error("Please upload and select a template first.")
-            elif not selected_template_ok:
-                st.error("Cannot preview because the selected template is invalid.")
-            elif not soffice_available():
-                st.error("LibreOffice/soffice is not available.")
-            elif not current_slides:
-                st.error("No slides to preview.")
-            else:
-                try:
-                    refresh_current_song_preview(song_item, selected_template_bytes)
-                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Preview generation failed: {e}")
+    if st.button("Refresh Current Song Preview"):
+        if selected_template_bytes is None:
+            st.error("Please upload and select a template first.")
+        elif not selected_template_ok:
+            st.error("Cannot preview because the selected template is invalid.")
+        elif not soffice_available():
+            st.error("LibreOffice/soffice is not available.")
+        elif not current_slides:
+            st.error("No slides to preview.")
+        else:
+            try:
+                refresh_current_song_preview(song_item, selected_template_bytes)
+                st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                st.rerun()
+            except Exception as e:
+                st.error(f"Preview generation failed: {e}")
 
         allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
