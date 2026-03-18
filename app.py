@@ -1,3 +1,4 @@
+
 import os
 import base64
 import tempfile
@@ -78,7 +79,6 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
-    "preview_anchor_slide": 1
 }
 
 for k, v in defaults.items():
@@ -374,6 +374,7 @@ def pptx_to_preview_images(pptx_bytes):
 
 def render_scrollable_images(images, height=760, active_slide=None):
     container_id = "current-song-scroll-container"
+    active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
     <div id="{container_id}" style="
@@ -384,13 +385,14 @@ def render_scrollable_images(images, height=760, active_slide=None):
         border-radius: 8px;
         background: #fafafa;
         box-sizing: border-box;
+        scroll-behavior: smooth;
     ">
     """
 
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " <- editing here" if active_slide == i else ""
+        badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
         <div id="slide-{i}" style="margin-bottom: 24px;">
@@ -406,27 +408,53 @@ def render_scrollable_images(images, height=760, active_slide=None):
 
     html += "</div>"
 
-    if active_slide is not None:
-        html += f"""
-        <script>
-        const container = document.getElementById("{container_id}");
-        const target = document.getElementById("slide-{active_slide}");
+    html += f"""
+    <script>
+    const container = document.getElementById("{container_id}");
+    const activeSlide = {active_slide_js};
+    const scrollKey = "current-song-preview-scroll";
 
-        function scrollToSlide() {{
-            if (!container || !target) return;
-
-            const top = target.offsetTop - 20;
-            container.scrollTo({{
-                top: top,
-                behavior: "smooth"
-            }});
+    function saveScroll() {{
+        if (container) {{
+            sessionStorage.setItem(scrollKey, container.scrollTop);
         }}
+    }}
 
-        setTimeout(scrollToSlide, 400);
-        </script>
-        """
+    function restoreScroll() {{
+        const saved = sessionStorage.getItem(scrollKey);
+        if (container && saved !== null) {{
+            container.scrollTop = parseInt(saved, 10);
+        }}
+    }}
+
+    function scrollToActiveSlide() {{
+        if (!container || activeSlide === null) return;
+
+        const target = document.getElementById("slide-" + activeSlide);
+        if (!target) return;
+
+        const top = target.offsetTop - 12;
+        container.scrollTop = top;
+        saveScroll();
+    }}
+
+    if (container) {{
+        container.addEventListener("scroll", saveScroll);
+    }}
+
+    setTimeout(() => {{
+        if (activeSlide !== null) {{
+            scrollToActiveSlide();
+        }} else {{
+            restoreScroll();
+        }}
+    }}, 500);
+    </script>
+    """
 
     st.components.v1.html(html, height=height, scrolling=False)
+
+
 
 
 def build_editor_song_item(current_slides):
@@ -589,7 +617,7 @@ def apply_pending_setlist_load():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
-    st.session_state["current_preview_slide"] = 1
+    st.session_state["current_preview_slide"] = None
 
 
 def reset_editor_for_new_song():
@@ -1230,30 +1258,14 @@ with st.container():
         )
         
         preview_images = st.session_state.get("current_song_preview_images")
-        
+
         if preview_images is not None and len(preview_images) > 0:
-            max_slide = len(preview_images)
-        
-            nav1, nav2, nav3 = st.columns([1, 2, 1])
-        
-            with nav1:
-                if st.button("Prev Slide"):
-                    st.session_state["preview_anchor_slide"] = max(
-                        1,
-                        st.session_state.get("preview_anchor_slide", 1) - 1
-                    )
-        
-            with nav2:
-                st.number_input(
-                    "Preview slide",
-                    min_value=1,
-                    max_value=max_slide,
-                    key="preview_anchor_slide",
-                )
-        
-            with nav3:
-                if st.button("Next Slide"):
-                    st.session_state["preview_anchor_slide"] = min(
-                        max_slide,
-                        st.session_state.get("preview_anchor_slide", 1) + 1
-                    )
+            render_scrollable_images(
+                preview_images,
+                height=600,
+                active_slide=st.session_state.get("current_preview_slide"),
+            )
+        else:
+            st.info(
+                "The current-song preview will appear here after a hymn is loaded or refreshed."
+            )
