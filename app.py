@@ -1331,12 +1331,20 @@ with st.container():
             st.rerun()
 
 with preview_col:
+    if "preview_mode_radio" not in st.session_state:
+        st.session_state["preview_mode_radio"] = (
+            "🎵 Song" if st.session_state.get("preview_mode", "song") == "song" else "📜 Service"
+        )
+    
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
-        index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
         horizontal=True,
         key="preview_mode_radio",
+    )
+    
+    st.session_state["preview_mode"] = (
+        "song" if "Song" in preview_mode_label else "service"
     )
 
     selected_mode = "song" if "Song" in st.session_state["preview_mode_radio"] else "service"
