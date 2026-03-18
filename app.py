@@ -1121,6 +1121,7 @@ with st.container(height=380):
     background:#ffffff;
     max-height:220px;
     overflow-y:auto;
+    scroll-behavior:smooth;
 ">
     {above_text}
     {''.join(order_lines)}
