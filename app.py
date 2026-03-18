@@ -531,6 +531,7 @@ def apply_pending_setlist_load():
     idx = st.session_state.get("pending_setlist_load")
     if idx is None:
         return
+
     if idx >= len(st.session_state["setlist"]):
         st.session_state["pending_setlist_load"] = None
         return
@@ -543,18 +544,32 @@ def apply_pending_setlist_load():
         "title": item["title"],
         "lyrics_raw": lyrics_text,
     }
+
     st.session_state["editing_setlist_index"] = idx
     st.session_state["editor_umh"] = item["umh_number"]
     st.session_state["editor_title"] = item["title"]
     st.session_state["editor_text"] = lyrics_text
 
-    st.session_state["editor_override_title_font_size"] = item.get("override_title_font_size", False)
-    st.session_state["editor_override_lyrics_font_size"] = item.get("override_lyrics_font_size", False)
-    st.session_state["editor_override_line_spacing"] = item.get("override_line_spacing", False)
+    # Restore per-song formatting
+    st.session_state["editor_override_title_font_size"] = item.get(
+        "override_title_font_size", False
+    )
+    st.session_state["editor_override_lyrics_font_size"] = item.get(
+        "override_lyrics_font_size", False
+    )
+    st.session_state["editor_override_line_spacing"] = item.get(
+        "override_line_spacing", False
+    )
 
-    st.session_state["editor_title_font_size_pt"] = item.get("title_font_size_pt", 28) or 28
-    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32) or 32
-    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2) or 1.2
+    st.session_state["editor_title_font_size_pt"] = (
+        item.get("title_font_size_pt", 28) or 28
+    )
+    st.session_state["editor_lyrics_font_size_pt"] = (
+        item.get("lyrics_font_size_pt", 32) or 32
+    )
+    st.session_state["editor_line_spacing"] = (
+        item.get("line_spacing", 1.2) or 1.2
+    )
 
     st.session_state["current_song_preview_images"] = None
     st.session_state["pending_setlist_load"] = None
@@ -562,7 +577,31 @@ def apply_pending_setlist_load():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["current_preview_slide"] = 1
+    st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
+
+    # Generate current-song preview immediately after loading
+    if (
+        st.session_state.get("selected_template_name")
+        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
+        and soffice_available()
+    ):
+        try:
+            template_bytes = st.session_state["uploaded_templates"][
+                st.session_state["selected_template_name"]
+            ]
+            template_ok, _, _ = validate_template_bytes(template_bytes)
+
+            if template_ok:
+                current_slides = get_current_slides(st.session_state["editor_text"])
+
+                if current_slides:
+                    song_item = build_editor_song_item(current_slides)
+                    refresh_current_song_preview(song_item, template_bytes)
+                    st.session_state["current_preview_slide"] = 1
+                    st.session_state["editor_status_message"] = "Song preview loaded."
+        except Exception as e:
+            st.session_state["editor_status_message"] = f"Preview load failed: {e}"
 
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
@@ -910,17 +949,6 @@ with st.sidebar:
     
             with action_cols[0]:
                 if st.button("✏️", use_container_width=True, help="Edit selected song"):
-                    
-                    song = st.session_state["setlist"][selected_index]
-
-                    st.session_state["editor_title_font_size_pt"] = song.get("title_font_size_pt", 28) or 28
-                    st.session_state["editor_lyrics_font_size_pt"] = song.get("lyrics_font_size_pt", 32) or 32
-                    st.session_state["editor_line_spacing"] = song.get("line_spacing", 1.2) or 1.2
-
-                    st.session_state["editor_override_title_font_size"] = song.get("override_title_font_size", False)
-                    st.session_state["editor_override_lyrics_font_size"] = song.get("override_lyrics_font_size", False)
-                    st.session_state["editor_override_line_spacing"] = song.get("override_line_spacing", False)
-                
                     st.session_state["pending_setlist_load"] = selected_index
                     st.session_state["preview_mode"] = "song"
                     st.session_state["current_song_preview_images"] = None
