@@ -78,6 +78,7 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
+    "preview_anchor_slide": 1
 }
 
 for k, v in defaults.items():
@@ -373,7 +374,6 @@ def pptx_to_preview_images(pptx_bytes):
 
 def render_scrollable_images(images, height=760, active_slide=None):
     container_id = "current-song-scroll-container"
-    active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
     <div id="{container_id}" style="
@@ -384,17 +384,16 @@ def render_scrollable_images(images, height=760, active_slide=None):
         border-radius: 8px;
         background: #fafafa;
         box-sizing: border-box;
-        scroll-behavior: smooth;
     ">
     """
 
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " ← editing here" if active_slide == i else ""
+        badge = " <- editing here" if active_slide == i else ""
 
         html += f"""
-        <div class="slide-block" data-slide-number="{i}" id="slide-{i}" style="margin-bottom: 24px;">
+        <div id="slide-{i}" style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">
                 Slide {i}{badge}
             </div>
@@ -407,100 +406,29 @@ def render_scrollable_images(images, height=760, active_slide=None):
 
     html += "</div>"
 
-    html += f"""
-    <script>
-    const container = document.getElementById("{container_id}");
-    const activeSlide = {active_slide_js};
-    const slideKey = "current-song-preview-visible-slide";
+    if active_slide is not None:
+        html += f"""
+        <script>
+        const container = document.getElementById("{container_id}");
+        const target = document.getElementById("slide-{active_slide}");
 
-    function getSlideBlocks() {{
-        return Array.from(container.querySelectorAll(".slide-block"));
-    }}
+        function scrollToSlide() {{
+            if (!container || !target) return;
 
-    function clampSlide(slideNum) {{
-        const blocks = getSlideBlocks();
-        if (blocks.length === 0) return 1;
-        return Math.max(1, Math.min(slideNum, blocks.length));
-    }}
-
-    function getSavedVisibleSlide() {{
-        const saved = sessionStorage.getItem(slideKey);
-        if (!saved) return 1;
-        const parsed = parseInt(saved, 10);
-        if (isNaN(parsed)) return 1;
-        return clampSlide(parsed);
-    }}
-
-    function saveVisibleSlide(slideNum) {{
-        sessionStorage.setItem(slideKey, String(clampSlide(slideNum)));
-    }}
-
-    function getTopVisibleSlide() {{
-        const blocks = getSlideBlocks();
-        if (!container || blocks.length === 0) return 1;
-
-        const containerRect = container.getBoundingClientRect();
-        let bestSlide = 1;
-        let bestDistance = Infinity;
-
-        blocks.forEach(block => {{
-            const rect = block.getBoundingClientRect();
-            const distance = Math.abs(rect.top - containerRect.top - 12);
-            const slideNum = parseInt(block.dataset.slideNumber, 10);
-
-            if (distance < bestDistance) {{
-                bestDistance = distance;
-                bestSlide = slideNum;
-            }}
-        }});
-
-        return clampSlide(bestSlide);
-    }}
-
-    function jumpToSlide(slideNum, smooth) {{
-        const target = document.getElementById("slide-" + clampSlide(slideNum));
-        if (!container || !target) return;
-
-        const top = target.offsetTop - 12;
-
-        if (smooth) {{
+            const top = target.offsetTop - 20;
             container.scrollTo({{
                 top: top,
                 behavior: "smooth"
             }});
-        }} else {{
-            container.scrollTop = top;
         }}
-    }}
 
-    function handleScroll() {{
-        saveVisibleSlide(getTopVisibleSlide());
-    }}
-
-    if (container) {{
-        container.addEventListener("scroll", handleScroll);
-    }}
-
-    setTimeout(() => {{
-        const oldSlide = getSavedVisibleSlide();
-
-        if (activeSlide !== null) {{
-            jumpToSlide(oldSlide, false);
-            setTimeout(() => {{
-                jumpToSlide(activeSlide, true);
-                setTimeout(() => {{
-                    saveVisibleSlide(activeSlide);
-                }}, 500);
-            }}, 150);
-        }} else {{
-            jumpToSlide(oldSlide, false);
-            saveVisibleSlide(oldSlide);
-        }}
-    }}, 500);
-    </script>
-    """
+        setTimeout(scrollToSlide, 400);
+        </script>
+        """
 
     st.components.v1.html(html, height=height, scrolling=False)
+
+
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state.get("editor_umh", "").strip(),
@@ -1302,14 +1230,30 @@ with st.container():
         )
         
         preview_images = st.session_state.get("current_song_preview_images")
-
+        
         if preview_images is not None and len(preview_images) > 0:
-            render_scrollable_images(
-                preview_images,
-                height=600,
-                active_slide=st.session_state.get("current_preview_slide"),
-            )
-        else:
-            st.info(
-                "The current-song preview will appear here after a hymn is loaded or refreshed."
-            )
+            max_slide = len(preview_images)
+        
+            nav1, nav2, nav3 = st.columns([1, 2, 1])
+        
+            with nav1:
+                if st.button("Prev Slide"):
+                    st.session_state["preview_anchor_slide"] = max(
+                        1,
+                        st.session_state.get("preview_anchor_slide", 1) - 1
+                    )
+        
+            with nav2:
+                st.number_input(
+                    "Preview slide",
+                    min_value=1,
+                    max_value=max_slide,
+                    key="preview_anchor_slide",
+                )
+        
+            with nav3:
+                if st.button("Next Slide"):
+                    st.session_state["preview_anchor_slide"] = min(
+                        max_slide,
+                        st.session_state.get("preview_anchor_slide", 1) + 1
+                    )
