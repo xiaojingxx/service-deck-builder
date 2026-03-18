@@ -816,11 +816,14 @@ def get_service_song_start_slides(setlist):
 
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
+
     preview_images = pptx_to_preview_images(ppt_data)
+
+    if not preview_images:
+        raise RuntimeError("No preview images generated from PPT")
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
-    st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
 
 
 # Must happen before widgets are created
@@ -1353,6 +1356,7 @@ with preview_col:
     # =========================
     if selected_mode == "service":
         st.subheader("Service Preview")
+        st.write("Images:", st.session_state.get("service_preview_images"))
         st.caption("📜 Full Service Deck")
     
         can_generate = (
@@ -1363,7 +1367,7 @@ with preview_col:
         )
     
         # 🔥 ALWAYS try generate if missing
-        if st.session_state.get("service_preview_images") is None and can_generate:
+        if not st.session_state.get("service_preview_images")
             try:
                 refresh_service_preview(
                     st.session_state["setlist"],
