@@ -931,6 +931,7 @@ with st.container():
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["pending_setlist_load"] = i
                             st.rerun()
+                            st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col3:
                         if st.button("↑", key=f"up_{i}") and i > 0:
