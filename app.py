@@ -1006,10 +1006,14 @@ with st.container():
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
         )
 
-        if editor_text != st.session_state.get("editor_text", ""):
-            st.session_state["editor_text"] = editor_text
+        if editor_text != old_text:
+        st.session_state["editor_text"] = editor_text
+        st.session_state["text_changed_flag"] = True
+
+        if st.session_state.get("text_changed_flag"):
+            st.session_state["text_changed_flag"] = False
             st.rerun()
-    
+        
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
 
@@ -1103,7 +1107,7 @@ with st.container():
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
-                    f"Blank separator added: {separator_added}. "
+                    f"Trigger refresh: {trigger_refresh}. "
                     f"Active slide: {st.session_state.get('current_preview_slide')}"
                 )
             except Exception as e:
