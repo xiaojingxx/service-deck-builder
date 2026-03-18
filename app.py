@@ -476,6 +476,25 @@ def load_song_into_editor_from_repository(match):
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
 
+    if (
+        st.session_state.get("selected_template_name")
+        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
+        and soffice_available()
+    ):
+        try:
+            template_bytes = st.session_state["uploaded_templates"][
+                st.session_state["selected_template_name"]
+            ]
+            template_ok, _, _ = validate_template_bytes(template_bytes)
+
+            if template_ok:
+                current_slides = get_current_slides(new_text)
+                if current_slides:
+                    song_item = build_editor_song_item(current_slides)
+                    refresh_current_song_preview(song_item, template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+        except Exception as e:
+            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
 def apply_pending_setlist_load():
     pending = st.session_state.get("pending_setlist_load")
