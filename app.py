@@ -1069,7 +1069,7 @@ with st.container():
             except Exception as e:
                 st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
-        st.session_state["last_editor_text"] = editor_text
+    st.session_state["last_editor_text"] = editor_text
 
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
