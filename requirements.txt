@@ -1,4 +1,5 @@
 streamlit
+streamlit-ace
 PyMuPDF
 gspread
 google-auth
