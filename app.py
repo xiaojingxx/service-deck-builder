@@ -1252,28 +1252,30 @@ with st.container():
             st.rerun()
 
     with preview_col:
-        st.subheader("Current Song Preview")
-
-        old_slides_dbg = get_current_slides(old_text)
-        new_slides_dbg = get_current_slides(editor_text)
-
-        st.caption(
-            f"Old slides: {len(old_slides_dbg)} | "
-            f"New slides: {len(new_slides_dbg)} | "
-            f"Trigger refresh: {trigger_refresh} | "
-            f"Active slide: {st.session_state.get('current_preview_slide')} | "
-            f"Target line: {st.session_state.get('last_detected_edit_line')}"
-        )
-
-        preview_images = st.session_state.get("current_song_preview_images")
-
-        if preview_images is not None and len(preview_images) > 0:
-            render_scrollable_images(
-                preview_images,
-                height=600,
-                active_slide=st.session_state.get("current_preview_slide"),
+        preview_header_col, preview_button_col = st.columns([3, 2])
+    
+        with preview_header_col:
+            st.subheader("Current Song Preview")
+    
+        with preview_button_col:
+            refresh_preview_clicked = st.button(
+                "Refresh Preview",
+                use_container_width=True
             )
-        else:
-            st.info(
-                "The current-song preview will appear here after a hymn is loaded or refreshed."
-            )
+    
+        if refresh_preview_clicked:
+            if selected_template_bytes is None:
+                st.error("Please upload and select a template first.")
+            elif not selected_template_ok:
+                st.error("Cannot preview because the selected template is invalid.")
+            elif not soffice_available():
+                st.error("LibreOffice/soffice is not available.")
+            elif not current_slides:
+                st.error("No slides to preview.")
+            else:
+                try:
+                    refresh_current_song_preview(song_item, selected_template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Preview generation failed: {e}")
