@@ -1035,247 +1035,244 @@ with st.sidebar:
 main_left, main_right = st.columns([1.15, 1], vertical_alignment="top")
 
 with main_left:
-    tab_editor, tab_format = st.tabs(["Editor", "Formatting"])
+    st.subheader("Song Editor")
 
-    with tab_editor:
-        edit_idx = st.session_state.get("editing_setlist_index")
-        if edit_idx is not None:
-            st.info(f"Editing setlist item #{edit_idx + 1}")
+    edit_idx = st.session_state.get("editing_setlist_index")
+    if edit_idx is not None:
+        st.info(f"Editing setlist item #{edit_idx + 1}")
 
-        meta_col1, meta_col2 = st.columns([1, 3])
-        with meta_col1:
-            st.text_input("UMH", key="editor_umh")
-        with meta_col2:
-            st.text_input("Title", key="editor_title")
+    meta_col1, meta_col2 = st.columns([1, 3])
+    with meta_col1:
+        st.text_input("UMH", key="editor_umh")
+    with meta_col2:
+        st.text_input("Title", key="editor_title")
 
-        st.markdown("#### Slide Splitting")
-        split_col1, split_col2 = st.columns([3, 1])
+    st.markdown("#### Slide Splitting")
+    split_col1, split_col2 = st.columns([3, 1])
 
-        with split_col1:
-            st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
-            st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
-            st.checkbox(
-                "Refresh preview only when a new slide break is detected",
-                key="refresh_on_new_line",
-            )
-
-        with split_col2:
-            st.write("")
-            refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
-
-        old_text = st.session_state.get("last_editor_text", "")
-        editor_text = st_ace(
-            value=st.session_state.get("editor_text", ""),
-            language="text",
-            theme="textmate",
-            keybinding="vscode",
-            font_size=16,
-            tab_size=2,
-            wrap=True,
-            show_gutter=False,
-            auto_update=True,
-            readonly=False,
-            height=520,
-            key=f"editor_ace_{st.session_state['editor_ace_key']}",
+    with split_col1:
+        st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
+        st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
+        st.checkbox(
+            "Refresh preview only when a new slide break is detected",
+            key="refresh_on_new_line",
         )
 
-        if editor_text is None:
-            editor_text = st.session_state.get("editor_text", "")
-        else:
-            st.session_state["editor_text"] = editor_text
+    with split_col2:
+        st.write("")
+        refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
 
-        current_slides = get_current_slides(editor_text)
-        song_item = build_editor_song_item(current_slides)
+    old_text = st.session_state.get("last_editor_text", "")
+    editor_text = st_ace(
+        value=st.session_state.get("editor_text", ""),
+        language="text",
+        theme="textmate",
+        keybinding="vscode",
+        font_size=16,
+        tab_size=2,
+        wrap=True,
+        show_gutter=False,
+        auto_update=True,
+        readonly=False,
+        height=520,
+        key=f"editor_ace_{st.session_state['editor_ace_key']}",
+    )
 
-        if st.session_state["auto_split_by_lines"]:
-            st.caption(
-                f"{len(current_slides)} slide(s) "
-                f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
-            )
-        else:
-            st.caption(f"{len(current_slides)} slide(s) (manual mode: blank lines separate slides)")
+    if editor_text is None:
+        editor_text = st.session_state.get("editor_text", "")
+    else:
+        st.session_state["editor_text"] = editor_text
 
-        if refresh_song_preview_clicked:
-            if selected_template_bytes is None:
-                st.error("Please upload and select a template first.")
-            elif not selected_template_ok:
-                st.error("Selected template is invalid.")
-            elif not soffice_available():
-                st.error("LibreOffice/soffice is not available.")
-            elif not current_slides:
-                st.error("No slides to preview.")
-            else:
-                try:
-                    st.session_state["preview_mode"] = "song"
-                    refresh_current_song_preview(song_item, selected_template_bytes)
-                    st.session_state["editor_status_message"] = "Song preview refreshed."
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Preview generation failed: {e}")
+    current_slides = get_current_slides(editor_text)
+    song_item = build_editor_song_item(current_slides)
 
-        new_signature = build_current_song_signature(
-            song_item,
-            st.session_state.get("selected_template_name"),
+    if st.session_state["auto_split_by_lines"]:
+        st.caption(
+            f"{len(current_slides)} slide(s) "
+            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
         )
+    else:
+        st.caption(f"{len(current_slides)} slide(s) (manual mode: blank lines separate slides)")
 
-        text_changed = editor_text != old_text
-        trigger_refresh = False
-
-        if st.session_state["auto_split_by_lines"]:
-            trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
+    if refresh_song_preview_clicked:
+        if selected_template_bytes is None:
+            st.error("Please upload and select a template first.")
+        elif not selected_template_ok:
+            st.error("Selected template is invalid.")
+        elif not soffice_available():
+            st.error("LibreOffice/soffice is not available.")
+        elif not current_slides:
+            st.error("No slides to preview.")
         else:
-            trigger_refresh = blank_separator_added(old_text, editor_text)
+            try:
+                st.session_state["preview_mode"] = "song"
+                refresh_current_song_preview(song_item, selected_template_bytes)
+                st.session_state["editor_status_message"] = "Song preview refreshed."
+                st.rerun()
+            except Exception as e:
+                st.error(f"Preview generation failed: {e}")
 
-        if text_changed and trigger_refresh:
-            if not st.session_state["auto_split_by_lines"]:
-                blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
-                if blank_idx is not None:
-                    lines = editor_text.splitlines()
-                    target_line_index = None
-                    for i in range(blank_idx + 1, len(lines)):
-                        if lines[i].strip() != "":
-                            target_line_index = i
-                            break
+    new_signature = build_current_song_signature(
+        song_item,
+        st.session_state.get("selected_template_name"),
+    )
 
-                    detected_slide = get_slide_number_from_line_index(
-                        editor_text,
-                        target_line_index,
-                        auto_split=False,
-                        lines_per_slide=st.session_state["lines_per_slide"],
-                    )
-                    if detected_slide is not None:
-                        st.session_state["current_preview_slide"] = detected_slide
-            else:
-                target_line_index = detect_new_slide_target_line(old_text, editor_text)
+    text_changed = editor_text != old_text
+    trigger_refresh = False
+
+    if st.session_state["auto_split_by_lines"]:
+        trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
+    else:
+        trigger_refresh = blank_separator_added(old_text, editor_text)
+
+    if text_changed and trigger_refresh:
+        if not st.session_state["auto_split_by_lines"]:
+            blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
+            if blank_idx is not None:
+                lines = editor_text.splitlines()
+                target_line_index = None
+                for i in range(blank_idx + 1, len(lines)):
+                    if lines[i].strip() != "":
+                        target_line_index = i
+                        break
+
                 detected_slide = get_slide_number_from_line_index(
                     editor_text,
                     target_line_index,
-                    auto_split=True,
+                    auto_split=False,
                     lines_per_slide=st.session_state["lines_per_slide"],
                 )
                 if detected_slide is not None:
                     st.session_state["current_preview_slide"] = detected_slide
-
-        should_refresh_preview = (
-            text_changed
-            and selected_template_bytes is not None
-            and selected_template_ok
-            and soffice_available()
-            and bool(current_slides)
-            and (
-                (st.session_state["refresh_on_new_line"] and trigger_refresh)
-                or (not st.session_state["refresh_on_new_line"])
+        else:
+            target_line_index = detect_new_slide_target_line(old_text, editor_text)
+            detected_slide = get_slide_number_from_line_index(
+                editor_text,
+                target_line_index,
+                auto_split=True,
+                lines_per_slide=st.session_state["lines_per_slide"],
             )
-            and new_signature != st.session_state.get("last_current_song_signature")
+            if detected_slide is not None:
+                st.session_state["current_preview_slide"] = detected_slide
+
+    should_refresh_preview = (
+        text_changed
+        and selected_template_bytes is not None
+        and selected_template_ok
+        and soffice_available()
+        and bool(current_slides)
+        and (
+            (st.session_state["refresh_on_new_line"] and trigger_refresh)
+            or (not st.session_state["refresh_on_new_line"])
         )
+        and new_signature != st.session_state.get("last_current_song_signature")
+    )
 
-        if should_refresh_preview:
-            try:
-                refresh_current_song_preview(song_item, selected_template_bytes)
-                st.session_state["editor_status_message"] = "Song preview auto-refreshed."
-            except Exception as e:
-                st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+    if should_refresh_preview:
+        try:
+            refresh_current_song_preview(song_item, selected_template_bytes)
+            st.session_state["editor_status_message"] = "Song preview auto-refreshed."
+        except Exception as e:
+            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
-        st.session_state["last_editor_text"] = editor_text
+    st.session_state["last_editor_text"] = editor_text
 
-        if st.session_state["editor_status_message"]:
-            st.caption(st.session_state["editor_status_message"])
-        
-        st.markdown("#### Add / Update")
-        allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+    if st.session_state["editor_status_message"]:
+        st.caption(st.session_state["editor_status_message"])
 
-        action_col1, action_col2 = st.columns(2)
-        with action_col1:
-            add_or_update = st.button(
-                "Update Song" if edit_idx is not None else "Add to Setlist",
-                use_container_width=True,
+    st.markdown("#### Song Formatting")
+
+    fmt_col1, fmt_col2, fmt_col3 = st.columns(3)
+
+    with fmt_col1:
+        st.checkbox("Override title font size", key="editor_override_title_font_size")
+        if st.session_state["editor_override_title_font_size"]:
+            st.slider(
+                "Title font size (pt)",
+                min_value=12,
+                max_value=60,
+                key="editor_title_font_size_pt",
             )
-        with action_col2:
-            clear_editor = st.button("Clear Editor", use_container_width=True)
+        else:
+            st.caption("Using template title size")
 
-        if add_or_update:
-            if not current_slides:
-                st.error("No slides to add.")
-            else:
-                item = song_item
-                edit_idx = st.session_state.get("editing_setlist_index")
+    with fmt_col2:
+        st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
+        if st.session_state["editor_override_lyrics_font_size"]:
+            st.slider(
+                "Lyrics font size (pt)",
+                min_value=12,
+                max_value=60,
+                key="editor_lyrics_font_size_pt",
+            )
+        else:
+            st.caption("Using template lyrics size")
 
-                if edit_idx is None:
-                    duplicate_index = next(
-                        (
-                            i for i, s in enumerate(st.session_state["setlist"])
-                            if s["umh_number"] == item["umh_number"]
-                            and s["title"] == item["title"]
-                            and s["slides"] == item["slides"]
-                        ),
-                        None,
-                    )
+    with fmt_col3:
+        st.checkbox("Override line spacing", key="editor_override_line_spacing")
+        if st.session_state["editor_override_line_spacing"]:
+            st.slider(
+                "Line spacing",
+                min_value=0.8,
+                max_value=2.0,
+                step=0.1,
+                key="editor_line_spacing",
+            )
+        else:
+            st.caption("Using template line spacing")
 
-                    if duplicate_index is not None and not allow_duplicates:
-                        st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
-                    else:
-                        st.session_state["setlist"].append(item)
-                        clear_service_outputs()
-                        st.success(
-                            f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                        )
-                        st.session_state["reset_editor_pending"] = True
-                        st.rerun()
+    st.markdown("#### Add / Update")
+    allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+
+    action_col1, action_col2 = st.columns(2)
+    with action_col1:
+        add_or_update = st.button(
+            "Update Song" if edit_idx is not None else "Add to Setlist",
+            use_container_width=True,
+        )
+    with action_col2:
+        clear_editor = st.button("Clear Editor", use_container_width=True)
+
+    if add_or_update:
+        if not current_slides:
+            st.error("No slides to add.")
+        else:
+            item = song_item
+            edit_idx = st.session_state.get("editing_setlist_index")
+
+            if edit_idx is None:
+                duplicate_index = next(
+                    (
+                        i for i, s in enumerate(st.session_state["setlist"])
+                        if s["umh_number"] == item["umh_number"]
+                        and s["title"] == item["title"]
+                        and s["slides"] == item["slides"]
+                    ),
+                    None,
+                )
+
+                if duplicate_index is not None and not allow_duplicates:
+                    st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                 else:
-                    st.session_state["setlist"][edit_idx] = item
+                    st.session_state["setlist"].append(item)
                     clear_service_outputs()
                     st.success(
-                        f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                        f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                     )
                     st.session_state["reset_editor_pending"] = True
                     st.rerun()
-
-        if clear_editor:
-            st.session_state["reset_editor_pending"] = True
-            st.rerun()
-
-    with tab_format:
-        st.markdown("#### Song Formatting")
-
-        fmt_col1, fmt_col2, fmt_col3 = st.columns(3)
-
-        with fmt_col1:
-            st.checkbox("Override title font size", key="editor_override_title_font_size")
-            if st.session_state["editor_override_title_font_size"]:
-                st.slider(
-                    "Title font size (pt)",
-                    min_value=12,
-                    max_value=60,
-                    key="editor_title_font_size_pt",
-                )
             else:
-                st.caption("Using template title size")
-
-        with fmt_col2:
-            st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
-            if st.session_state["editor_override_lyrics_font_size"]:
-                st.slider(
-                    "Lyrics font size (pt)",
-                    min_value=12,
-                    max_value=60,
-                    key="editor_lyrics_font_size_pt",
+                st.session_state["setlist"][edit_idx] = item
+                clear_service_outputs()
+                st.success(
+                    f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                 )
-            else:
-                st.caption("Using template lyrics size")
+                st.session_state["reset_editor_pending"] = True
+                st.rerun()
 
-        with fmt_col3:
-            st.checkbox("Override line spacing", key="editor_override_line_spacing")
-            if st.session_state["editor_override_line_spacing"]:
-                st.slider(
-                    "Line spacing",
-                    min_value=0.8,
-                    max_value=2.0,
-                    step=0.1,
-                    key="editor_line_spacing",
-                )
-            else:
-                st.caption("Using template line spacing")
-
+    if clear_editor:
+        st.session_state["reset_editor_pending"] = True
+        st.rerun()
 
 with main_right:
     st.subheader("Preview")
