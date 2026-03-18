@@ -1279,6 +1279,13 @@ with st.container():
     with preview_col:
         st.subheader("Current Song Preview")
 
+        st.caption(
+            f"Old slides: {old_slide_count} | New slides: {new_slide_count} | "
+            f"Slide count changed: {slide_count_has_changed} | "
+            f"Active slide: {st.session_state.get('current_preview_slide')} | "
+            f"Target line: {st.session_state.get('last_detected_edit_line')}"
+        )
+
         if st.session_state.get("current_song_preview_images"):
             render_scrollable_images(
                 st.session_state["current_song_preview_images"],
