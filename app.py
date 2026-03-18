@@ -970,21 +970,21 @@ with st.container(height=380):
     
         if st.session_state["setlist"]:
             remove_index = None
-    
+        
             setlist_container = st.container(height=375)
-    
+        
             with setlist_container:
                 for i, song in enumerate(st.session_state["setlist"]):
                     current_edit = st.session_state.get("editing_setlist_index")
                     is_current = current_edit == i
-                    
+        
                     if song["umh_number"]:
                         label = f'UMH {song["umh_number"]} {song["title"]}'
                     else:
                         label = song["title"]
-                    
+        
                     total_slides = len(song["slides"])
-                    
+        
                     row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
                         [10, 1, 1, 1, 1], gap="small"
                     )
