@@ -1259,16 +1259,16 @@ with preview_col:
     # =========================
     # PREVIEW MODE TOGGLE (TOP)
     # =========================
-    preview_mode = st.radio(
-        "",
+    preview_mode_label = st.radio(
+        "Preview Mode",
         ["🎵 Song", "📜 Service"],
+        index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
         horizontal=True,
     )
-
+    
     st.session_state["preview_mode"] = (
-        "song" if "Song" in preview_mode else "service"
+        "song" if "Song" in preview_mode_label else "service"
     )
-
     # =========================
     # HEADER
     # =========================
