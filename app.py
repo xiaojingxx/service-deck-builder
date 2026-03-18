@@ -643,8 +643,22 @@ def reset_editor_for_new_song():
     st.session_state["current_preview_slide"] = None
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
-    return new_text.count("\n\n") > old_text.count("\n\n")
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
 
+    # Find positions of blank lines that are NOT at the end
+    def valid_blank_positions(lines):
+        positions = []
+        for i in range(len(lines)):
+            if lines[i].strip() == "":
+                # only count if there's a non-blank line after it
+                for j in range(i + 1, len(lines)):
+                    if lines[j].strip() != "":
+                        positions.append(i)
+                        break
+        return positions
+
+    return len(valid_blank_positions(new_lines)) > len(valid_blank_positions(old_lines))
 def detect_new_slide_target_line(old_text: str, new_text: str):
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
@@ -1113,6 +1127,9 @@ with st.container():
     
                 if detected_slide is not None:
                     st.session_state["current_preview_slide"] = detected_slide
+                else:
+                    # fallback: do NOT change slide
+                    pass
         else:
             target_line_index = detect_new_slide_target_line(old_text, editor_text)
     
