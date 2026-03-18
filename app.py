@@ -896,9 +896,26 @@ with st.container():
                     
                     total_slides = len(song["slides"])
                     
-                    row_bg = "#e0f2fe" if is_current else "#ffffff"
-                    row_border = "2px solid #2563eb" if is_current else "1px solid #e5e7eb"
-                    row_badge = " (Editing)" if is_current else ""
+                    row_bg = "#dbeafe" if is_current else "#ffffff"  # stronger blue
+                    row_border = "2px solid #1d4ed8" if is_current else "1px solid #e5e7eb"
+                    row_badge = " ✏️ Editing" if is_current else ""
+                    
+                    row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
+                        [10, 1, 1, 1, 1], gap="small"
+                    )
+
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: {row_bg};
+                            border: {row_border};
+                            border-radius: 8px;
+                            padding: 6px 6px;
+                            margin-bottom: 6px;
+                        ">
+                        """,
+                        unsafe_allow_html=True,
+                    )
                     
                     row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
                         [10, 1, 1, 1, 1], gap="small"
@@ -906,17 +923,7 @@ with st.container():
                     
                     with row_col1:
                         st.markdown(
-                            f"""
-                            <div style="
-                                background: {row_bg};
-                                border: {row_border};
-                                border-radius: 8px;
-                                padding: 6px 10px;
-                                margin-bottom: 6px;
-                            ">
-                                <strong>{i+1}. {label} ({total_slides}){row_badge}</strong>
-                            </div>
-                            """,
+                            f"<strong>{i+1}. {label} ({total_slides}){row_badge}</strong>",
                             unsafe_allow_html=True,
                         )
                     
