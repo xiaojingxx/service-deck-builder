@@ -968,7 +968,7 @@ with st.container():
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["preview_mode"] = "song"
                             st.session_state["pending_setlist_load"] = i
-                            st.rerun(
+                            st.rerun()
                     
                     with row_col3:
                         if st.button("↑", key=f"up_{i}") and i > 0:
