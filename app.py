@@ -79,6 +79,8 @@ defaults = {
     "last_current_song_signature": None,
     "editor_status_message": "",
     "editor_ace_key": 0,
+    "preview_mode": "song",
+    "service_preview_images": None,
 }
 
 for k, v in defaults.items():
@@ -982,7 +984,16 @@ with st.container():
                             st.session_state["setlist"],
                             selected_template_bytes,
                         )
+            
                         st.session_state["ppt_data"] = ppt_data
+            
+                        # ✅ NEW: generate images for service preview
+                        service_images = pptx_to_preview_images(ppt_data)
+                        st.session_state["service_preview_images"] = service_images
+            
+                        # ✅ switch preview mode
+                        st.session_state["preview_mode"] = "service"
+            
                         st.success("Service preview generated.")
                     except Exception as e:
                         st.error(f"Preview generation failed: {e}")
@@ -1158,6 +1169,7 @@ with st.container():
         if should_refresh_preview:
             try:
                 refresh_current_song_preview(song_item, selected_template_bytes)
+                st.session_state["preview_mode"] = "song"
                 st.session_state["editor_status_message"] = (
                     f"Current-song preview refreshed. "
                     f"Trigger refresh: {trigger_refresh}. "
@@ -1303,6 +1315,22 @@ with st.container():
         
         preview_images = st.session_state.get("current_song_preview_images")
     
+        preview_mode = st.session_state.get("preview_mode", "song")
+        
+        if preview_mode == "service":
+            st.caption("Showing: Full Service Preview")
+        
+            preview_images = st.session_state.get("service_preview_images")
+        
+        elif preview_mode == "song":
+            st.caption("Showing: Current Song Preview")
+        
+            preview_images = st.session_state.get("current_song_preview_images")
+        
+        else:
+            preview_images = None
+        
+        
         if preview_images is not None and len(preview_images) > 0:
             render_scrollable_images(
                 preview_images,
@@ -1310,6 +1338,4 @@ with st.container():
                 active_slide=st.session_state.get("current_preview_slide"),
             )
         else:
-            st.info(
-                "The current-song preview will appear here after a hymn is loaded or refreshed."
-            )
+            st.info("Preview will appear here after generation.")
