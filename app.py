@@ -883,7 +883,6 @@ with left_col:
     if st.button("Clear Current Editor"):
         st.session_state["reset_editor_pending"] = True
         st.rerun()
-
 with right_col:
     st.subheader("Current Setlist")
 
@@ -918,6 +917,7 @@ with right_col:
                     )
                     st.session_state["ppt_data"] = None
                     st.session_state["preview_images"] = None
+                    st.session_state["current_song_preview_images"] = None
 
                     current_edit = st.session_state.get("editing_setlist_index")
                     if current_edit == i:
@@ -935,6 +935,7 @@ with right_col:
                     )
                     st.session_state["ppt_data"] = None
                     st.session_state["preview_images"] = None
+                    st.session_state["current_song_preview_images"] = None
 
                     current_edit = st.session_state.get("editing_setlist_index")
                     if current_edit == i:
@@ -952,6 +953,7 @@ with right_col:
             st.session_state["setlist"].pop(remove_index)
             st.session_state["ppt_data"] = None
             st.session_state["preview_images"] = None
+            st.session_state["current_song_preview_images"] = None
 
             current_edit = st.session_state.get("editing_setlist_index")
             if current_edit == remove_index:
@@ -999,20 +1001,35 @@ with right_col:
             st.rerun()
 
         if st.session_state["ppt_data"] is not None:
+            download_data = (
+                st.session_state["ppt_data"].getvalue()
+                if hasattr(st.session_state["ppt_data"], "getvalue")
+                else st.session_state["ppt_data"]
+            )
             st.download_button(
                 label="Download Service PowerPoint",
-                data=st.session_state["ppt_data"],
+                data=download_data,
                 file_name="service_deck.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
 
+        st.markdown("---")
         st.subheader("Current Song Preview")
-        if st.session_state["current_song_preview_images"]:
-            render_scrollable_images(st.session_state["current_song_preview_images"], height=360)
-        else:
-            st.info("The current-song preview will refresh when you add a new line, or you can click 'Refresh Current Song Preview'.")
 
+        if st.session_state.get("current_song_preview_images"):
+            render_scrollable_images(
+                st.session_state["current_song_preview_images"],
+                height=360
+            )
+        else:
+            st.info(
+                "The current-song preview will refresh when you add a new line, "
+                "or you can click 'Refresh Current Song Preview'."
+            )
+
+        st.markdown("---")
         st.subheader("PowerPoint Preview")
+
         if st.session_state["preview_images"]:
             render_scrollable_images(st.session_state["preview_images"])
         else:
