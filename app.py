@@ -1057,58 +1057,64 @@ with setlist_col:
 
                 st.rerun()
 
-        st.markdown("**Setlist Order**")
-        
-        start = max(0, selected_index - 3)
-        end = min(len(st.session_state["setlist"]), selected_index + 4)
-        
-        order_lines = []
-        
-        for i in range(start, end):
-            song = st.session_state["setlist"][i]
-            is_current = i == selected_index
-            is_editing = i == st.session_state.get("editing_setlist_index")
-        
-            if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
-            else:
-                label = f'{i+1}. {song["title"]}'
-        
-            prefix = "🔹 " if is_current else ""
-            suffix = " ✏️" if is_editing else ""
-        
-            if is_current:
-                order_lines.append(
-                    f"""
-                    <div style="
-                        background:#eff6ff;
-                        border:1px solid #bfdbfe;
-                        border-radius:6px;
-                        padding:6px 8px;
-                        margin-bottom:6px;
-                        font-weight:600;
-                    ">
-                        {prefix}{label}{suffix}
-                    </div>
-                    """
-                )
-            else:
-                order_lines.append(
-                    f"""
-                    <div style="
-                        padding:4px 8px;
-                        margin-bottom:4px;
-                    ">
-                        {prefix}{label}{suffix}
-                    </div>
-                    """
-                )
-        
-        above_text = f"<div style='color:#6b7280; font-size:0.85rem; margin-bottom:6px;'>... {start} song(s) above</div>" if start > 0 else ""
-        below_text = f"<div style='color:#6b7280; font-size:0.85rem; margin-top:6px;'>... {len(st.session_state['setlist']) - end} song(s) below</div>" if end < len(st.session_state["setlist"]) else ""
-        
-        st.markdown(
-            f"""
+            st.markdown("**Setlist Order**")
+            
+            start = max(0, selected_index - 3)
+            end = min(len(st.session_state["setlist"]), selected_index + 4)
+            
+            order_lines = []
+            
+            for i in range(start, end):
+                song = st.session_state["setlist"][i]
+                is_current = i == selected_index
+                is_editing = i == st.session_state.get("editing_setlist_index")
+            
+                if song["umh_number"]:
+                    label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
+                else:
+                    label = f'{i+1}. {song["title"]}'
+            
+                prefix = "🔹 " if is_current else ""
+                suffix = " ✏️" if is_editing else ""
+            
+                if is_current:
+                    order_lines.append(
+                        f"""
+            <div style="
+                background:#eff6ff;
+                border:1px solid #bfdbfe;
+                border-radius:6px;
+                padding:6px 8px;
+                margin-bottom:6px;
+                font-weight:600;
+            ">
+                {prefix}{label}{suffix}
+            </div>
+            """
+                    )
+                else:
+                    order_lines.append(
+                        f"""
+            <div style="
+                padding:4px 8px;
+                margin-bottom:4px;
+            ">
+                {prefix}{label}{suffix}
+            </div>
+            """
+                    )
+            
+            above_text = (
+                f"<div style='color:#6b7280; font-size:0.85rem; margin-bottom:6px;'>... {start} song(s) above</div>"
+                if start > 0 else ""
+            )
+            
+            below_text = (
+                f"<div style='color:#6b7280; font-size:0.85rem; margin-top:6px;'>... {len(st.session_state['setlist']) - end} song(s) below</div>"
+                if end < len(st.session_state["setlist"]) else ""
+            )
+            
+            html_block = f"""
             <div style="
                 border:1px solid #e5e7eb;
                 border-radius:8px;
@@ -1121,50 +1127,9 @@ with setlist_col:
                 {''.join(order_lines)}
                 {below_text}
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        start = max(0, selected_index - 3)
-        end = min(len(st.session_state["setlist"]), selected_index + 4)
-
-        for i in range(start, end):
-            song = st.session_state["setlist"][i]
-            is_current = i == selected_index
-            is_editing = i == st.session_state.get("editing_setlist_index")
-
-            if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
-            else:
-                label = f'{i+1}. {song["title"]}'
-
-            prefix = "🔹 " if is_current else ""
-            suffix = " ✏️" if is_editing else ""
-
-            if is_current:
-                st.markdown(f"**{prefix}{label}{suffix}**")
-            else:
-                st.markdown(f"{prefix}{label}{suffix}")
-
-        if start > 0:
-            st.caption(f"... {start} song(s) above")
-        if end < len(st.session_state["setlist"]):
-            st.caption(f"... {len(st.session_state['setlist']) - end} song(s) below")
-
-        if st.session_state["ppt_data"] is not None:
-            download_data = (
-                st.session_state["ppt_data"].getvalue()
-                if hasattr(st.session_state["ppt_data"], "getvalue")
-                else st.session_state["ppt_data"]
-            )
-            st.download_button(
-                label="Download Service PowerPoint",
-                data=download_data,
-                file_name="service_deck.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-    else:
-        st.info("No songs added yet.")
+            """
+            
+            st.markdown(html_block, unsafe_allow_html=True)
         
 # =========================
 # ROW 3 — SONG EDITOR | CURRENT SONG PREVIEW
