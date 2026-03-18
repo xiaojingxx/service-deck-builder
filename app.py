@@ -1396,7 +1396,7 @@ with preview_col:
     if preview_images is not None and len(preview_images) > 0:
         render_scrollable_images(
             preview_images,
-            height=600,
+            height=950,
             active_slide=st.session_state.get("current_preview_slide"),
         )
     else:
