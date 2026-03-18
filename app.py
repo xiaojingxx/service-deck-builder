@@ -968,83 +968,98 @@ with st.container(height=380):
             st.session_state["preview_mode"] = "song"
             st.rerun()
     
-        if st.session_state["setlist"]:
-            remove_index = None
-        
-            setlist_container = st.container(height=375)
-        
-            with setlist_container:
-                for i, song in enumerate(st.session_state["setlist"]):
-                    current_edit = st.session_state.get("editing_setlist_index")
-                    is_current = current_edit == i
-        
-                    if song["umh_number"]:
-                        label = f'UMH {song["umh_number"]} {song["title"]}'
+    if st.session_state["setlist"]:
+        remove_index = None
+    
+        st.markdown(
+            """
+            <style>
+            .setlist-scrollbox {
+                height: 650px;
+                overflow-y: auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                padding: 8px;
+                background: white;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+    
+        st.markdown('<div class="setlist-scrollbox">', unsafe_allow_html=True)
+    
+        for i, song in enumerate(st.session_state["setlist"]):
+            current_edit = st.session_state.get("editing_setlist_index")
+            is_current = current_edit == i
+    
+            if song["umh_number"]:
+                label = f'UMH {song["umh_number"]} {song["title"]}'
+            else:
+                label = song["title"]
+    
+            total_slides = len(song["slides"])
+    
+            row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
+                [10, 1, 1, 1, 1], gap="small"
+            )
+    
+            with row_col1:
+                bg = "#eff6ff" if is_current else "#ffffff"
+                border = "2px solid #dbeafe" if is_current else "1px solid #e5e7eb"
+    
+                if st.button(
+                    f"{i+1}. {label} ({total_slides})",
+                    key=f"jump_{i}",
+                    use_container_width=True
+                ):
+                    st.session_state["preview_mode"] = "service"
+                    st.session_state["preview_mode_radio"] = "📜 Service"
+    
+                    starts = st.session_state.get("service_song_start_slides", [])
+                    if i < len(starts):
+                        st.session_state["current_preview_slide"] = starts[i]
                     else:
-                        label = song["title"]
-        
-                    total_slides = len(song["slides"])
-        
-                    row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns(
-                        [10, 1, 1, 1, 1], gap="small"
+                        st.session_state["current_preview_slide"] = 1
+    
+                    st.rerun()
+    
+            with row_col2:
+                if st.button("✏️", key=f"edit_{i}"):
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["preview_mode_radio"] = "🎵 Song"
+                    st.session_state["pending_setlist_load"] = i
+                    st.session_state["current_song_preview_images"] = None
+                    st.session_state["last_current_song_signature"] = None
+                    st.rerun()
+    
+            with row_col3:
+                if st.button("↑", key=f"up_{i}") and i > 0:
+                    st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
+                        st.session_state["setlist"][i],
+                        st.session_state["setlist"][i - 1],
                     )
-                    
-                    # ✅ Title (single line, no wrapping)
-                    with row_col1:
-                        bg = "#eff6ff" if is_current else "#ffffff"
-                        border = "2px solid #dbeafe" if is_current else "1px solid #e5e7eb"
-                    
-                        if st.button(
-                            f"{i+1}. {label} ({total_slides})",
-                            key=f"jump_{i}",
-                            use_container_width=True
-                        ):
-                            # 👉 switch to service mode
-                            st.session_state["preview_mode"] = "service"
-                            st.session_state["preview_mode_radio"] = "📜 Service"
-                    
-                            # 👉 scroll to that song
-                            starts = st.session_state.get("service_song_start_slides", [])
-                            if i < len(starts):
-                                st.session_state["current_preview_slide"] = starts[i]
-                            else:
-                                st.session_state["current_preview_slide"] = 1  # fallback
-                    
-                            st.rerun()
-                    
-                    # Buttons
-                    with row_col2:
-                        if st.button("✏️", key=f"edit_{i}"):
-                            st.session_state["preview_mode"] = "song"
-                            st.session_state["preview_mode_radio"] = "🎵 Song"
-                            st.session_state["pending_setlist_load"] = i
-                            st.session_state["current_song_preview_images"] = None
-                            st.session_state["last_current_song_signature"] = None
-                            st.rerun()
-                    
-                    with row_col3:
-                        if st.button("↑", key=f"up_{i}") and i > 0:
-                            st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
-                                st.session_state["setlist"][i],
-                                st.session_state["setlist"][i - 1],
-                            )
-                            st.session_state["service_preview_images"] = None
-                            st.session_state["service_song_start_slides"] = []
-                            st.rerun()
-                    
-                    with row_col4:
-                        if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
-                            st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
-                                st.session_state["setlist"][i],
-                                st.session_state["setlist"][i + 1],
-                            )
-                            st.session_state["service_preview_images"] = None
-                            st.session_state["service_song_start_slides"] = []
-                            st.rerun()
-                    
-                    with row_col5:
-                        if st.button("🗑", key=f"delete_{i}"):
-                            remove_index = i
+                    st.session_state["ppt_data"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
+                    st.rerun()
+    
+            with row_col4:
+                if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
+                    st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
+                        st.session_state["setlist"][i],
+                        st.session_state["setlist"][i + 1],
+                    )
+                    st.session_state["ppt_data"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
+                    st.rerun()
+    
+            with row_col5:
+                if st.button("🗑", key=f"delete_{i}"):
+                    remove_index = i
+    
+        st.markdown("</div>", unsafe_allow_html=True)
                         
             if remove_index is not None:
                 st.session_state["setlist"].pop(remove_index)
