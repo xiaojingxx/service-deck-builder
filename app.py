@@ -410,8 +410,15 @@ def render_scrollable_images(images, height=760, active_slide=None):
     if active_slide is not None:
         html += f"""
         <script>
+        const container = document.getElementById("{container_id}");
+    
+        // restore previous scroll FIRST
+        const savedScroll = sessionStorage.getItem("scrollTop");
+        if (savedScroll !== null) {{
+            container.scrollTop = parseInt(savedScroll);
+        }}
+    
         function scrollToSlide() {{
-            const container = document.getElementById("{container_id}");
             const target = document.getElementById("slide-{active_slide}");
     
             if (container && target) {{
@@ -424,8 +431,12 @@ def render_scrollable_images(images, height=760, active_slide=None):
             }}
         }}
     
-        // 🔥 wait for render
         setTimeout(scrollToSlide, 200);
+    
+        // save scroll position on scroll
+        container.addEventListener("scroll", () => {{
+            sessionStorage.setItem("scrollTop", container.scrollTop);
+        }});
         </script>
         """
 
@@ -984,12 +995,17 @@ with st.container():
             tab_size=2,
             wrap=True,
             show_gutter=False,
-            auto_update=True,
+            auto_update=False,
             readonly=False,
             height=420,
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
         )
 
+        if st.button("Update Preview"):
+            st.session_state["editor_text"] = editor_text
+            st.session_state["force_refresh"] = True
+            st.rerun()
+    
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
 
@@ -1060,18 +1076,18 @@ with st.container():
                 current_active = st.session_state.get("current_preview_slide")
                 st.session_state["current_preview_slide"] = 1 if current_active is None else min(current_active, new_slide_count)
 
+        force_refresh = st.session_state.get("force_refresh", False)
+        
         should_refresh_preview = (
-            text_changed
+            (force_refresh or slides_structure_changed)
             and selected_template_bytes is not None
             and selected_template_ok
             and soffice_available()
             and bool(current_slides)
-            and (
-                (st.session_state["refresh_on_new_line"] and slides_structure_changed)
-                or (not st.session_state["refresh_on_new_line"])
-            )
             and new_signature != st.session_state.get("last_current_song_signature")
         )
+
+        st.session_state["force_refresh"] = False
 
         if should_refresh_preview:
             try:
