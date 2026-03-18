@@ -75,6 +75,7 @@ defaults = {
     "last_editor_text": "",
     "last_current_song_signature": None,
     "editor_status_message": "",
+    "editor_ace_key": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -472,7 +473,8 @@ def load_song_into_editor_from_repository(match):
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = new_text
     st.session_state["last_current_song_signature"] = None
-
+    st.session_state["editor_status_message"] = ""
+    st.session_state["editor_ace_key"] += 1
 
 def apply_pending_setlist_load():
     pending = st.session_state.get("pending_setlist_load")
@@ -521,7 +523,8 @@ def apply_pending_setlist_load():
     st.session_state["pending_setlist_load"] = None
     st.session_state["last_editor_text"] = lyrics_text
     st.session_state["last_current_song_signature"] = None
-
+    st.session_state["editor_status_message"] = ""
+    st.session_state["editor_ace_key"] += 1
 
 def reset_editor_for_new_song():
     st.session_state["loaded_song"] = None
@@ -542,7 +545,8 @@ def reset_editor_for_new_song():
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = ""
     st.session_state["last_current_song_signature"] = None
-
+    st.session_state["editor_status_message"] = ""
+    st.session_state["editor_ace_key"] += 1
 
 # Must happen before widgets are created
 apply_pending_setlist_load()
@@ -707,7 +711,7 @@ with left_col:
         auto_update=True,
         readonly=False,
         height=420,
-        key="editor_ace",
+        key=f"editor_ace_{st.session_state['editor_ace_key']}",
     )
 
     if editor_text is None:
