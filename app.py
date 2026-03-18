@@ -1404,4 +1404,4 @@ with preview_col:
         st.info("Preview will appear here.")
 
     if st.session_state.get("current_preview_slide") is None:
-    st.session_state["current_preview_slide"] = 1
+        st.session_state["current_preview_slide"] = 1
