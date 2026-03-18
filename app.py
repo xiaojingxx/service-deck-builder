@@ -1006,6 +1006,8 @@ with st.container():
             key=f"editor_ace_{st.session_state['editor_ace_key']}",
         )
 
+        old_text = st.session_state.get("last_editor_text", "")
+
         if editor_text != old_text:
             st.session_state["editor_text"] = editor_text
             st.session_state["text_changed_flag"] = True
@@ -1016,8 +1018,6 @@ with st.container():
         
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
-
-        old_text = st.session_state.get("last_editor_text", "")
 
         current_slides = get_current_slides(editor_text)
 
