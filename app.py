@@ -1110,12 +1110,22 @@ with st.container():
 
         st.markdown("#### Slide Splitting")
 
-        st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
-        st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
-        st.checkbox(
-            "Refresh current song preview only when a blank slide separator is added",
-            key="refresh_on_new_line"
-        )
+        split_col1, split_col2 = st.columns([3, 2])
+        
+        with split_col1:
+            st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
+            st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
+            st.checkbox(
+                "Refresh current song preview only when a blank slide separator is added",
+                key="refresh_on_new_line"
+            )
+        
+        with split_col2:
+            st.write("")  # spacing
+            refresh_song_preview_clicked = st.button(
+                "Refresh Song Preview",
+                use_container_width=True
+            )
 
         editor_text = st_ace(
             value=st.session_state.get("editor_text", ""),
@@ -1153,6 +1163,28 @@ with st.container():
             )
 
         song_item = build_editor_song_item(current_slides)
+
+        if refresh_song_preview_clicked:
+            if selected_template_bytes is None:
+                st.error("Please upload and select a template first.")
+            elif not selected_template_ok:
+                st.error("Cannot preview because the selected template is invalid.")
+            elif not soffice_available():
+                st.error("LibreOffice/soffice is not available.")
+            elif not current_slides:
+                st.error("No slides to preview.")
+            else:
+                try:
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["preview_mode_radio"] = "🎵 Song"
+                    if st.session_state.get("current_preview_slide") is None:
+                        st.session_state["current_preview_slide"] = 1
+                    refresh_current_song_preview(song_item, selected_template_bytes)
+                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Preview generation failed: {e}")
+    
         new_signature = build_current_song_signature(
             song_item,
             st.session_state.get("selected_template_name"),
