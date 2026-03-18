@@ -902,8 +902,8 @@ with st.container():
                     
                     # ✅ Title (single line, no wrapping)
                     with row_col1:
-                        bg = "#dbeafe" if is_current else "#ffffff"
-                        border = "2px solid #1d4ed8" if is_current else "1px solid #e5e7eb"
+                        bg = "#eff6ff" if is_current else "#ffffff"
+                        border = "2px solid #dbeafe" if is_current else "1px solid #e5e7eb"
                     
                         st.markdown(
                             f"""
