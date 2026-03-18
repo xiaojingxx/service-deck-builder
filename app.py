@@ -373,15 +373,18 @@ def pptx_to_preview_images(pptx_bytes):
 
 def render_scrollable_images(images, height=760, active_slide=None):
     html = f"""
-    <div id="preview-container" style="
-        height: {height}px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        padding: 12px;
-        border-radius: 8px;
-        background: #fafafa;
-        box-sizing: border-box;
-    ">
+    <div
+        id="preview-container"
+        style="
+            height: {height}px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 12px;
+            border-radius: 8px;
+            background: #fafafa;
+            box-sizing: border-box;
+        "
+    >
     """
 
     for i, img_bytes in enumerate(images, start=1):
@@ -389,9 +392,15 @@ def render_scrollable_images(images, height=760, active_slide=None):
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
 
         html += f"""
-        <div id="slide-{i}" style="margin-bottom: 24px;">
+        <div
+            id="slide-{i}"
+            style="margin-bottom: 24px;"
+        >
             <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
-            <img src="data:image/png;base64,{b64}" style="width: 100%; border: {border}; display: block;" />
+            <img
+                src="data:image/png;base64,{b64}"
+                style="width: 100%; border: {border}; display: block;"
+            />
         </div>
         """
 
@@ -400,16 +409,19 @@ def render_scrollable_images(images, height=760, active_slide=None):
     if active_slide is not None:
         html += f"""
         <script>
-            const el = document.getElementById("slide-{active_slide}");
-            if (el) {{
-                el.scrollIntoView({{behavior: "smooth", block: "start"}});
-            }}
+            window.addEventListener("load", function() {{
+                const container = document.getElementById("preview-container");
+                const target = document.getElementById("slide-{active_slide}");
+
+                if (container && target) {{
+                    const top = target.offsetTop - container.offsetTop - 8;
+                    container.scrollTop = Math.max(0, top);
+                }}
+            }});
         </script>
         """
 
-    st.components.v1.html(html, height=height, scrolling=True)
-
-
+    st.components.v1.html(html, height=height, scrolling=False)
 
 def build_editor_song_item(current_slides):
     return {
@@ -1047,7 +1059,12 @@ with st.container():
             st.session_state["lines_per_slide"],
         )
         st.session_state["last_detected_edit_line"] = edited_line_index
-        st.session_state["current_preview_slide"] = detected_slide
+
+        if detected_slide is not None:
+            st.session_state["current_preview_slide"] = detected_slide
+            
+    if st.session_state.get("current_preview_slide") is None and current_slides:
+        st.session_state["current_preview_slide"] = 1
     
     should_refresh_preview = (
         text_changed
