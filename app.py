@@ -922,9 +922,14 @@ with st.sidebar:
                 if st.button("✏️", use_container_width=True, help="Edit selected song"):
                     
                     song = st.session_state["setlist"][selected_index]
-                    
-                    st.session_state["current_font_size"] = song.get("font_size", 36)
-                    st.session_state["current_line_spacing"] = song.get("line_spacing", 1.2)
+
+                    st.session_state["editor_title_font_size_pt"] = song.get("title_font_size_pt", 28) or 28
+                    st.session_state["editor_lyrics_font_size_pt"] = song.get("lyrics_font_size_pt", 32) or 32
+                    st.session_state["editor_line_spacing"] = song.get("line_spacing", 1.2) or 1.2
+
+                    st.session_state["editor_override_title_font_size"] = song.get("override_title_font_size", False)
+                    st.session_state["editor_override_lyrics_font_size"] = song.get("override_lyrics_font_size", False)
+                    st.session_state["editor_override_line_spacing"] = song.get("override_line_spacing", False)
                 
                     st.session_state["pending_setlist_load"] = selected_index
                     st.session_state["preview_mode"] = "song"
@@ -1175,43 +1180,6 @@ with main_left:
 
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
-        
-        st.subheader("Formatting")
-                
-        edit_idx = st.session_state.get("editing_setlist_index")
-        
-        if edit_idx is not None:
-            song = st.session_state["setlist"][edit_idx]
-        
-            default_font_size = song.get("lyrics_font_size_pt") or 36
-            default_line_spacing = song.get("line_spacing") or 1.2
-        else:
-            default_font_size = st.session_state.get("current_font_size", 36)
-            default_line_spacing = st.session_state.get("current_line_spacing", 1.2)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            font_size = st.slider(
-                "Font Size",
-                min_value=max(10, default_font_size - 20),
-                max_value=default_font_size + 20,
-                value=default_font_size,
-                step=1,
-            )
-        
-        with col2:
-            line_spacing = st.slider(
-                "Line Spacing",
-                min_value=0.8,
-                max_value=2.5,
-                value=default_line_spacing,
-                step=0.1,
-            )
-        
-        # Save to session
-        st.session_state["current_font_size"] = font_size
-        st.session_state["current_line_spacing"] = line_spacing
         
         st.markdown("#### Add / Update")
         allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
