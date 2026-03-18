@@ -925,138 +925,138 @@ with st.container(height=380):
                 else:
                     st.info("No matching titles found.")
 
-with setlist_col:
-    header_col1, header_col2 = st.columns([3, 1])
-
-    with header_col1:
-        st.subheader("Current Setlist")
-
-    with header_col2:
-        clear_setlist_clicked = st.button("Clear Setlist", use_container_width=True)
-
-    if clear_setlist_clicked:
-        st.session_state["setlist"] = []
-        st.session_state["ppt_data"] = None
-        st.session_state["preview_images"] = None
-        st.session_state["current_song_preview_images"] = None
-        st.session_state["service_preview_images"] = None
-        st.session_state["service_song_start_slides"] = []
-        st.session_state["editing_setlist_index"] = None
-        st.session_state["pending_setlist_load"] = None
-        st.session_state["reset_editor_pending"] = True
-        st.session_state["preview_mode"] = "song"
-        st.session_state["preview_mode_radio"] = "🎵 Song"
-        st.rerun()
-
-    if st.session_state["setlist"]:
-        options = []
-        for i, song in enumerate(st.session_state["setlist"]):
-            if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})'
-            else:
-                label = f'{i+1}. {song["title"]} ({len(song["slides"])})'
-            options.append(label)
-
-        current_edit = st.session_state.get("editing_setlist_index")
-        default_index = current_edit if current_edit is not None and current_edit < len(options) else 0
-
-        selected_label = st.selectbox(
-            "Songs in setlist",
-            options,
-            index=default_index,
-            key="setlist_selector",
-            label_visibility="collapsed",
-        )
-
-        selected_index = options.index(selected_label)
-        selected_song = st.session_state["setlist"][selected_index]
-
-        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns([4, 1, 1, 1, 1])
-
-        with action_col1:
-            if st.button("Go to Service", use_container_width=True):
-                st.session_state["preview_mode"] = "service"
-                st.session_state["preview_mode_radio"] = "📜 Service"
-
-                starts = st.session_state.get("service_song_start_slides", [])
-                if selected_index < len(starts):
-                    st.session_state["current_preview_slide"] = starts[selected_index]
+    with setlist_col:
+        header_col1, header_col2 = st.columns([3, 1])
+    
+        with header_col1:
+            st.subheader("Current Setlist")
+    
+        with header_col2:
+            clear_setlist_clicked = st.button("Clear Setlist", use_container_width=True)
+    
+        if clear_setlist_clicked:
+            st.session_state["setlist"] = []
+            st.session_state["ppt_data"] = None
+            st.session_state["preview_images"] = None
+            st.session_state["current_song_preview_images"] = None
+            st.session_state["service_preview_images"] = None
+            st.session_state["service_song_start_slides"] = []
+            st.session_state["editing_setlist_index"] = None
+            st.session_state["pending_setlist_load"] = None
+            st.session_state["reset_editor_pending"] = True
+            st.session_state["preview_mode"] = "song"
+            st.session_state["preview_mode_radio"] = "🎵 Song"
+            st.rerun()
+    
+        if st.session_state["setlist"]:
+            options = []
+            for i, song in enumerate(st.session_state["setlist"]):
+                if song["umh_number"]:
+                    label = f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})'
                 else:
-                    st.session_state["current_preview_slide"] = 1
-
-                st.rerun()
-
-        with action_col2:
-            if st.button("✏️", key="setlist_edit_selected", use_container_width=True):
-                st.session_state["preview_mode"] = "song"
-                st.session_state["preview_mode_radio"] = "🎵 Song"
-                st.session_state["pending_setlist_load"] = selected_index
-                st.session_state["current_song_preview_images"] = None
-                st.session_state["last_current_song_signature"] = None
-                st.rerun()
-
-        with action_col3:
-            if st.button("↑", key="setlist_up_selected", use_container_width=True) and selected_index > 0:
-                st.session_state["setlist"][selected_index - 1], st.session_state["setlist"][selected_index] = (
-                    st.session_state["setlist"][selected_index],
-                    st.session_state["setlist"][selected_index - 1],
-                )
-                st.session_state["ppt_data"] = None
-                st.session_state["service_preview_images"] = None
-                st.session_state["service_song_start_slides"] = []
-
-                current_edit = st.session_state.get("editing_setlist_index")
-                if current_edit == selected_index:
-                    st.session_state["editing_setlist_index"] = selected_index - 1
-                elif current_edit == selected_index - 1:
-                    st.session_state["editing_setlist_index"] = selected_index
-
-                st.rerun()
-
-        with action_col4:
-            if (
-                st.button("↓", key="setlist_down_selected", use_container_width=True)
-                and selected_index < len(st.session_state["setlist"]) - 1
-            ):
-                st.session_state["setlist"][selected_index + 1], st.session_state["setlist"][selected_index] = (
-                    st.session_state["setlist"][selected_index],
-                    st.session_state["setlist"][selected_index + 1],
-                )
-                st.session_state["ppt_data"] = None
-                st.session_state["service_preview_images"] = None
-                st.session_state["service_song_start_slides"] = []
-
-                current_edit = st.session_state.get("editing_setlist_index")
-                if current_edit == selected_index:
-                    st.session_state["editing_setlist_index"] = selected_index + 1
-                elif current_edit == selected_index + 1:
-                    st.session_state["editing_setlist_index"] = selected_index
-
-                st.rerun()
-
-        with action_col5:
-            if st.button("🗑", key="setlist_delete_selected", use_container_width=True):
-                st.session_state["setlist"].pop(selected_index)
-                st.session_state["ppt_data"] = None
-                st.session_state["preview_images"] = None
-                st.session_state["current_song_preview_images"] = None
-                st.session_state["service_preview_images"] = None
-                st.session_state["service_song_start_slides"] = []
-
-                current_edit = st.session_state.get("editing_setlist_index")
-                if current_edit == selected_index:
-                    st.session_state["reset_editor_pending"] = True
-                elif current_edit is not None and current_edit > selected_index:
-                    st.session_state["editing_setlist_index"] = current_edit - 1
-
-                pending = st.session_state.get("pending_setlist_load")
-                if pending == selected_index:
-                    st.session_state["pending_setlist_load"] = None
-                elif pending is not None and pending > selected_index:
-                    st.session_state["pending_setlist_load"] = pending - 1
-
-                st.rerun()
-
+                    label = f'{i+1}. {song["title"]} ({len(song["slides"])})'
+                options.append(label)
+    
+            current_edit = st.session_state.get("editing_setlist_index")
+            default_index = current_edit if current_edit is not None and current_edit < len(options) else 0
+    
+            selected_label = st.selectbox(
+                "Songs in setlist",
+                options,
+                index=default_index,
+                key="setlist_selector",
+                label_visibility="collapsed",
+            )
+    
+            selected_index = options.index(selected_label)
+            selected_song = st.session_state["setlist"][selected_index]
+    
+            action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns([4, 1, 1, 1, 1])
+    
+            with action_col1:
+                if st.button("Go to Service", use_container_width=True):
+                    st.session_state["preview_mode"] = "service"
+                    st.session_state["preview_mode_radio"] = "📜 Service"
+    
+                    starts = st.session_state.get("service_song_start_slides", [])
+                    if selected_index < len(starts):
+                        st.session_state["current_preview_slide"] = starts[selected_index]
+                    else:
+                        st.session_state["current_preview_slide"] = 1
+    
+                    st.rerun()
+    
+            with action_col2:
+                if st.button("✏️", key="setlist_edit_selected", use_container_width=True):
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["preview_mode_radio"] = "🎵 Song"
+                    st.session_state["pending_setlist_load"] = selected_index
+                    st.session_state["current_song_preview_images"] = None
+                    st.session_state["last_current_song_signature"] = None
+                    st.rerun()
+    
+            with action_col3:
+                if st.button("↑", key="setlist_up_selected", use_container_width=True) and selected_index > 0:
+                    st.session_state["setlist"][selected_index - 1], st.session_state["setlist"][selected_index] = (
+                        st.session_state["setlist"][selected_index],
+                        st.session_state["setlist"][selected_index - 1],
+                    )
+                    st.session_state["ppt_data"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
+    
+                    current_edit = st.session_state.get("editing_setlist_index")
+                    if current_edit == selected_index:
+                        st.session_state["editing_setlist_index"] = selected_index - 1
+                    elif current_edit == selected_index - 1:
+                        st.session_state["editing_setlist_index"] = selected_index
+    
+                    st.rerun()
+    
+            with action_col4:
+                if (
+                    st.button("↓", key="setlist_down_selected", use_container_width=True)
+                    and selected_index < len(st.session_state["setlist"]) - 1
+                ):
+                    st.session_state["setlist"][selected_index + 1], st.session_state["setlist"][selected_index] = (
+                        st.session_state["setlist"][selected_index],
+                        st.session_state["setlist"][selected_index + 1],
+                    )
+                    st.session_state["ppt_data"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
+    
+                    current_edit = st.session_state.get("editing_setlist_index")
+                    if current_edit == selected_index:
+                        st.session_state["editing_setlist_index"] = selected_index + 1
+                    elif current_edit == selected_index + 1:
+                        st.session_state["editing_setlist_index"] = selected_index
+    
+                    st.rerun()
+    
+            with action_col5:
+                if st.button("🗑", key="setlist_delete_selected", use_container_width=True):
+                    st.session_state["setlist"].pop(selected_index)
+                    st.session_state["ppt_data"] = None
+                    st.session_state["preview_images"] = None
+                    st.session_state["current_song_preview_images"] = None
+                    st.session_state["service_preview_images"] = None
+                    st.session_state["service_song_start_slides"] = []
+    
+                    current_edit = st.session_state.get("editing_setlist_index")
+                    if current_edit == selected_index:
+                        st.session_state["reset_editor_pending"] = True
+                    elif current_edit is not None and current_edit > selected_index:
+                        st.session_state["editing_setlist_index"] = current_edit - 1
+    
+                    pending = st.session_state.get("pending_setlist_load")
+                    if pending == selected_index:
+                        st.session_state["pending_setlist_load"] = None
+                    elif pending is not None and pending > selected_index:
+                        st.session_state["pending_setlist_load"] = pending - 1
+    
+                    st.rerun()
+    
             st.markdown("**Setlist Order**")
             
             start = max(0, selected_index - 3)
