@@ -1,115 +1,48 @@
-import os
-import base64
-import tempfile
-import subprocess
+import html
 from io import BytesIO
 
-import fitz  # PyMuPDF
-import gspread
 import streamlit as st
-from google.oauth2.service_account import Credentials
+from streamlit_ace import st_ace
 from pptx import Presentation
-from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
+from pptx.enum.text import PP_ALIGN
 
-# =========================
-# PATHS / SETTINGS
-# =========================
-SOFFICE_PATH = os.environ.get("SOFFICE_PATH", "soffice")
 
-SHEET_KEY = st.secrets["SHEET_KEY"]
-WORKSHEET_NAME = st.secrets["WORKSHEET_NAME"]
+st.set_page_config(page_title="Live PPT Editor", layout="wide")
+st.title("Live PPT Editor")
 
-FIRST_LAYOUT_NAME = "TEMPLATE_FIRST"
-REST_LAYOUT_NAME = "TEMPLATE_REST"
-
-# =========================
-# GOOGLE SHEETS
-# =========================
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-credentials = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"],
-    scopes=SCOPES,
-)
-gc = gspread.authorize(credentials)
-sheet = gc.open_by_key(SHEET_KEY).worksheet(WORKSHEET_NAME)
-
-# =========================
-# STREAMLIT PAGE
-# =========================
-st.set_page_config(page_title="Service Deck Builder", layout="wide")
-st.title("Service Deck Builder")
-
-# =========================
-# SESSION STATE INIT
-# =========================
+# -----------------------------
+# Session state
+# -----------------------------
 defaults = {
-    "setlist": [],
     "editor_text": "",
-    "editor_text_box": "",
-    "editor_umh": "",
-    "editor_title": "",
-
-    "editor_override_title_font_size": False,
-    "editor_override_lyrics_font_size": False,
-    "editor_override_line_spacing": False,
-
-    "editor_title_font_size_pt": 28,
-    "editor_lyrics_font_size_pt": 32,
-    "editor_line_spacing": 1.2,
-
-    "loaded_song": None,
-    "ppt_data": None,
-    "preview_images": None,
-    "editing_setlist_index": None,
-    "pending_setlist_load": None,
-    "uploaded_templates": {},
-    "selected_template_name": None,
-    "reset_editor_pending": False,
-
+    "last_text": "",
+    "refresh_on_enter_only": True,
     "auto_split_by_lines": True,
     "lines_per_slide": 4,
+    "preview_slides": [],
+    "last_preview_reason": "Preview not generated yet.",
+    "deck_title": "Live Service Deck",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 
-# =========================
-# HELPERS
-# =========================
-def split_slides(text: str) -> list[list[str]]:
-    """
-    Manual mode:
-    Blank lines separate slides.
-    Non-empty lines inside a block become one slide.
-    """
+# -----------------------------
+# Helpers
+# -----------------------------
+def split_slides_manual(text: str) -> list[list[str]]:
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
-
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
-
     return slides
 
 
-def split_slides_by_line_count_with_verse_separators(
-    text: str,
-    lines_per_slide: int = 4
-) -> list[list[str]]:
-    """
-    Auto mode:
-    - Blank lines act as verse separators.
-    - Each non-empty line is treated as one lyric line.
-    - Each verse is split into chunks of `lines_per_slide`.
-    - Verses do not merge across blank lines.
-    """
+def split_slides_auto(text: str, lines_per_slide: int = 4) -> list[list[str]]:
     if lines_per_slide < 1:
         lines_per_slide = 1
 
@@ -118,7 +51,6 @@ def split_slides_by_line_count_with_verse_separators(
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
-
         if line == "":
             if current_verse:
                 verses.append(current_verse)
@@ -139,181 +71,104 @@ def split_slides_by_line_count_with_verse_separators(
     return slides
 
 
-def find_row_by_umh(ws, umh_number: str):
-    records = ws.get_all_records()
-    for row in records:
-        if str(row.get("UMH Number", "")).strip() == umh_number.strip():
-            return row
-    return None
+def get_current_slides(text: str) -> list[list[str]]:
+    if st.session_state["auto_split_by_lines"]:
+        return split_slides_auto(text, st.session_state["lines_per_slide"])
+    return split_slides_manual(text)
 
 
-def search_titles(ws, keyword: str):
-    records = ws.get_all_records()
-    keyword = keyword.lower().strip()
-    matches = []
-
-    for row in records:
-        title = str(row.get("Title", "")).strip()
-        if keyword and keyword in title.lower():
-            matches.append(row)
-
-    return matches[:20]
+def should_refresh_preview(old_text: str, new_text: str, enter_only: bool) -> bool:
+    if new_text == old_text:
+        return False
+    if not enter_only:
+        return True
+    return new_text.count("\n") > old_text.count("\n")
 
 
-def open_presentation_from_bytes(template_bytes: bytes):
-    return Presentation(BytesIO(template_bytes))
+def render_slide_preview_html(slides: list[list[str]]) -> str:
+    html_parts = [
+        """
+        <div style="
+            height: 760px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #f7f7f7;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+        ">
+        """
+    ]
+
+    for i, slide in enumerate(slides, start=1):
+        lines_html = "".join(
+            f'<div style="margin: 0.35rem 0;">{html.escape(line)}</div>'
+            for line in slide
+        )
+        html_parts.append(
+            f"""
+            <div style="margin-bottom: 24px;">
+                <div style="font-weight: 600; margin: 0 0 8px 4px;">Slide {i}</div>
+                <div style="
+                    width: 100%;
+                    min-height: 220px;
+                    background: white;
+                    border: 1px solid #cfcfcf;
+                    border-radius: 10px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    padding: 24px;
+                    box-sizing: border-box;
+                    font-size: 26px;
+                    line-height: 1.4;
+                    font-family: Arial, sans-serif;
+                ">
+                    <div style="width: 100%;">
+                        {lines_html}
+                    </div>
+                </div>
+            </div>
+            """
+        )
+
+    html_parts.append("</div>")
+    return "".join(html_parts)
 
 
-def get_layout_by_name(prs, layout_name):
-    for slide_master in prs.slide_masters:
-        for slide_layout in slide_master.slide_layouts:
-            if slide_layout.name.strip() == layout_name:
-                return slide_layout
-    return None
+def build_pptx(slides: list[list[str]], deck_title: str) -> BytesIO:
+    prs = Presentation()
 
+    # Use default layout 5 (title only) if available, else layout 0
+    try:
+        title_layout = prs.slide_layouts[5]
+    except IndexError:
+        title_layout = prs.slide_layouts[0]
 
-def set_shape_text(shape, text, font_size_pt=None, line_spacing=None):
-    if shape is None or not getattr(shape, "has_text_frame", False):
-        return
+    for i, slide_lines in enumerate(slides):
+        slide = prs.slides.add_slide(title_layout)
 
-    tf = shape.text_frame
-    tf.clear()
-    tf.word_wrap = True
+        # Add title on first slide
+        if i == 0 and slide.shapes.title is not None:
+            slide.shapes.title.text = deck_title
 
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        if i == 0:
-            p = tf.paragraphs[0]
-        else:
-            p = tf.add_paragraph()
+        # Add textbox for lyrics/content
+        left = top = Pt(40)
+        width = Pt(640)
+        height = Pt(360)
 
-        p.alignment = PP_ALIGN.CENTER
+        textbox = slide.shapes.add_textbox(left, top + Pt(40), width, height)
+        tf = textbox.text_frame
+        tf.clear()
+        tf.word_wrap = True
 
-        # If None, keep slide master / layout default spacing
-        if line_spacing is not None:
-            p.line_spacing = line_spacing
-
-        run = p.add_run()
-        run.text = line
-
-        # If None, keep slide master / layout default font size
-        if font_size_pt is not None:
-            run.font.size = Pt(font_size_pt)
-
-
-def get_body_placeholder(slide):
-    placeholders = list(slide.placeholders)
-
-    for ph in placeholders:
-        name = getattr(ph, "name", "").lower()
-        if "title" not in name and getattr(ph, "has_text_frame", False):
-            return ph
-
-    if len(placeholders) > 1:
-        return placeholders[1]
-
-    if placeholders:
-        return placeholders[0]
-
-    return None
-
-
-def delete_all_slides(prs):
-    while len(prs.slides) > 0:
-        slide_id = prs.slides._sldIdLst[0]
-        rId = slide_id.rId
-        prs.part.drop_rel(rId)
-        del prs.slides._sldIdLst[0]
-
-
-def validate_template_bytes(template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    errors = []
-    warnings = []
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None:
-        errors.append(f"Missing layout: {FIRST_LAYOUT_NAME}")
-
-    if rest_layout is None:
-        errors.append(f"Missing layout: {REST_LAYOUT_NAME}")
-
-    if errors:
-        return False, errors, warnings
-
-    first_slide = prs.slides.add_slide(first_layout)
-    rest_slide = prs.slides.add_slide(rest_layout)
-
-    title_placeholder = first_slide.shapes.title
-    first_body_placeholder = get_body_placeholder(first_slide)
-    rest_body_placeholder = get_body_placeholder(rest_slide)
-
-    if title_placeholder is None:
-        errors.append(f"{FIRST_LAYOUT_NAME} is missing a title placeholder")
-
-    if first_body_placeholder is None:
-        errors.append(f"{FIRST_LAYOUT_NAME} is missing a body/lyrics placeholder")
-
-    if rest_body_placeholder is None:
-        errors.append(f"{REST_LAYOUT_NAME} is missing a body/lyrics placeholder")
-
-    return len(errors) == 0, errors, warnings
-
-
-def create_combined_ppt(setlist, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
-
-    delete_all_slides(prs)
-
-    for song in setlist:
-        umh_number = str(song["umh_number"]).strip()
-        title = str(song["title"]).strip()
-        slides = song["slides"]
-
-        title_font_size_pt = song.get("title_font_size_pt")
-        lyrics_font_size_pt = song.get("lyrics_font_size_pt")
-        line_spacing = song.get("line_spacing")
-
-        full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
-
-        for i, slide_lines in enumerate(slides):
-            lyrics_text = "\n".join(slide_lines)
-
-            if i == 0:
-                new_slide = prs.slides.add_slide(first_layout)
-                title_placeholder = new_slide.shapes.title
-                body_placeholder = get_body_placeholder(new_slide)
-
-                set_shape_text(
-                    title_placeholder,
-                    full_title,
-                    font_size_pt=title_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-                set_shape_text(
-                    body_placeholder,
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-            else:
-                new_slide = prs.slides.add_slide(rest_layout)
-                body_placeholder = get_body_placeholder(new_slide)
-                set_shape_text(
-                    body_placeholder,
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
+        for j, line in enumerate(slide_lines):
+            p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
+            p.alignment = PP_ALIGN.CENTER
+            run = p.add_run()
+            run.text = line
+            run.font.size = Pt(28)
 
     output = BytesIO()
     prs.save(output)
@@ -321,584 +176,97 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     return output
 
 
-def pptx_to_preview_images(pptx_bytes):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pptx_path = os.path.join(tmpdir, "preview.pptx")
+# -----------------------------
+# Controls
+# -----------------------------
+c1, c2, c3 = st.columns([1, 1, 1])
 
-        with open(pptx_path, "wb") as f:
-            f.write(pptx_bytes.getvalue())
+with c1:
+    st.checkbox("Refresh only when Enter/new line is added", key="refresh_on_enter_only")
 
-        cmd = [
-            SOFFICE_PATH,
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", tmpdir,
-            pptx_path,
-        ]
+with c2:
+    st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+with c3:
+    st.slider("Lines per slide", 1, 8, key="lines_per_slide")
 
-        if result.returncode != 0:
-            raise RuntimeError(f"LibreOffice conversion failed:\n{result.stderr}")
+st.text_input("Deck title", key="deck_title")
 
-        pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
-        if not pdf_files:
-            raise FileNotFoundError(
-                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
-            )
+# -----------------------------
+# Editor + preview
+# -----------------------------
+left, right = st.columns([1, 1.2])
 
-        pdf_path = os.path.join(tmpdir, pdf_files[0])
-        doc = fitz.open(pdf_path)
+with left:
+    st.subheader("Editable text")
 
-        images = []
-        for page in doc:
-            pix = page.get_pixmap(dpi=160)
-            img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
-            pix.save(img_path)
-            with open(img_path, "rb") as f:
-                images.append(f.read())
+    new_text = st_ace(
+        value=st.session_state["editor_text"],
+        language="text",
+        theme="textmate",
+        keybinding="vscode",
+        font_size=16,
+        tab_size=2,
+        wrap=True,
+        show_gutter=False,
+        auto_update=True,
+        readonly=False,
+        height=760,
+        key="lyrics_editor",
+    )
 
-        return images
+    if new_text is None:
+        new_text = st.session_state["editor_text"]
 
-
-def render_scrollable_images(images):
-    html = """
-    <div style="
-        height: 760px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        padding: 12px;
-        border-radius: 8px;
-        background: #fafafa;
-    ">
-    """
-    for i, img_bytes in enumerate(images, start=1):
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        html += f"""
-        <div style="margin-bottom: 24px;">
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}</div>
-            <img src="data:image/png;base64,{b64}" style="width: 100%; border: 1px solid #ccc;" />
-        </div>
-        """
-    html += "</div>"
-    st.components.v1.html(html, height=780, scrolling=False)
-
-
-def load_song_into_editor_from_repository(match):
-    song = {
-        "umh_number": str(match.get("UMH Number", "")).strip(),
-        "title": str(match.get("Title", "")).strip(),
-        "lyrics_raw": str(match.get("Lyrics (Raw)", "")).strip(),
-    }
-    new_text = song["lyrics_raw"]
-
-    st.session_state["loaded_song"] = song
-    st.session_state["editor_umh"] = song["umh_number"]
-    st.session_state["editor_title"] = song["title"]
+    old_text = st.session_state["last_text"]
     st.session_state["editor_text"] = new_text
-    st.session_state["editor_text_box"] = new_text
-    st.session_state["editing_setlist_index"] = None
 
-    # New repository-loaded songs default to template values
-    st.session_state["editor_override_title_font_size"] = False
-    st.session_state["editor_override_lyrics_font_size"] = False
-    st.session_state["editor_override_line_spacing"] = False
-    st.session_state["editor_title_font_size_pt"] = 28
-    st.session_state["editor_lyrics_font_size_pt"] = 32
-    st.session_state["editor_line_spacing"] = 1.2
-
-    st.session_state["ppt_data"] = None
-    st.session_state["preview_images"] = None
-
-
-def apply_pending_setlist_load():
-    pending = st.session_state.get("pending_setlist_load")
-    if pending is None:
-        return
-    if pending >= len(st.session_state["setlist"]):
-        st.session_state["pending_setlist_load"] = None
-        return
-
-    item = st.session_state["setlist"][pending]
-    lyrics_text = "\n\n".join("\n".join(slide) for slide in item["slides"])
-
-    st.session_state["loaded_song"] = {
-        "umh_number": item["umh_number"],
-        "title": item["title"],
-        "lyrics_raw": lyrics_text,
-    }
-    st.session_state["editor_umh"] = item["umh_number"]
-    st.session_state["editor_title"] = item["title"]
-    st.session_state["editor_text"] = lyrics_text
-    st.session_state["editor_text_box"] = lyrics_text
-    st.session_state["editing_setlist_index"] = pending
-
-    st.session_state["editor_override_title_font_size"] = item.get(
-        "override_title_font_size", False
-    )
-    st.session_state["editor_override_lyrics_font_size"] = item.get(
-        "override_lyrics_font_size", False
-    )
-    st.session_state["editor_override_line_spacing"] = item.get(
-        "override_line_spacing", False
+    refresh_now = should_refresh_preview(
+        old_text=old_text,
+        new_text=new_text,
+        enter_only=st.session_state["refresh_on_enter_only"],
     )
 
-    st.session_state["editor_title_font_size_pt"] = (
-        item.get("title_font_size_pt", 28) or 28
-    )
-    st.session_state["editor_lyrics_font_size_pt"] = (
-        item.get("lyrics_font_size_pt", 32) or 32
-    )
-    st.session_state["editor_line_spacing"] = (
-        item.get("line_spacing", 1.2) or 1.2
-    )
-
-    st.session_state["ppt_data"] = None
-    st.session_state["preview_images"] = None
-    st.session_state["pending_setlist_load"] = None
-
-
-def reset_editor_for_new_song():
-    st.session_state["loaded_song"] = None
-    st.session_state["editor_umh"] = ""
-    st.session_state["editor_title"] = ""
-    st.session_state["editor_text"] = ""
-    st.session_state["editor_text_box"] = ""
-    st.session_state["editing_setlist_index"] = None
-
-    st.session_state["editor_override_title_font_size"] = False
-    st.session_state["editor_override_lyrics_font_size"] = False
-    st.session_state["editor_override_line_spacing"] = False
-    st.session_state["editor_title_font_size_pt"] = 28
-    st.session_state["editor_lyrics_font_size_pt"] = 32
-    st.session_state["editor_line_spacing"] = 1.2
-
-    st.session_state["ppt_data"] = None
-    st.session_state["preview_images"] = None
-
-
-# Must happen before widgets are created
-apply_pending_setlist_load()
-
-if st.session_state.get("reset_editor_pending"):
-    reset_editor_for_new_song()
-    st.session_state["reset_editor_pending"] = False
-
-
-# =========================
-# TEMPLATE SECTION
-# =========================
-st.subheader("Template")
-
-uploaded_templates = st.file_uploader(
-    "Upload one or more Template.pptx files",
-    type=["pptx"],
-    accept_multiple_files=True,
-    key="template_uploader"
-)
-
-if uploaded_templates:
-    for file in uploaded_templates:
-        st.session_state["uploaded_templates"][file.name] = file.getvalue()
-
-template_names = list(st.session_state["uploaded_templates"].keys())
-
-selected_template_bytes = None
-selected_template_ok = False
-selected_template_errors = []
-selected_template_warnings = []
-
-if template_names:
-    default_index = 0
-    if st.session_state["selected_template_name"] in template_names:
-        default_index = template_names.index(st.session_state["selected_template_name"])
-
-    selected_template_name = st.selectbox(
-        "Select template",
-        template_names,
-        index=default_index
-    )
-    st.session_state["selected_template_name"] = selected_template_name
-    selected_template_bytes = st.session_state["uploaded_templates"][selected_template_name]
-
-    selected_template_ok, selected_template_errors, selected_template_warnings = (
-        validate_template_bytes(selected_template_bytes)
-    )
-
-    if selected_template_ok:
-        st.success(f"Template is usable: {selected_template_name}")
-    else:
-        st.error(f"Template is invalid: {selected_template_name}")
-        for err in selected_template_errors:
-            st.write(f"- {err}")
-
-    if selected_template_warnings:
-        st.warning("Template warnings:")
-        for warn in selected_template_warnings:
-            st.write(f"- {warn}")
-
-    if st.button("Remove Selected Template"):
-        del st.session_state["uploaded_templates"][selected_template_name]
-        st.session_state["selected_template_name"] = None
-        st.rerun()
-else:
-    st.info("Please upload at least one PowerPoint template to continue.")
-
-
-# =========================
-# MAIN LAYOUT
-# =========================
-left_col, right_col = st.columns([1, 1.2])
-
-with left_col:
-    st.subheader("Load Song")
-
-    if st.button("Start New Song"):
-        st.session_state["reset_editor_pending"] = True
-        st.rerun()
-
-    load_mode = st.radio("Find hymn by", ["UMH Number", "Title"], horizontal=True)
-
-    if load_mode == "UMH Number":
-        umh_number_input = st.text_input("Enter UMH Number", placeholder="e.g. 57")
-
-        if st.button("Load Hymn by Number"):
-            if umh_number_input.strip():
-                match = find_row_by_umh(sheet, umh_number_input)
-                if match:
-                    load_song_into_editor_from_repository(match)
-                    st.success("Hymn loaded.")
-                    st.rerun()
-                else:
-                    st.error("Hymn not found.")
-
-    else:
-        keyword = st.text_input("Search title", placeholder="e.g. thousand tongues")
-
-        if keyword.strip():
-            matches = search_titles(sheet, keyword)
-            if matches:
-                options = [
-                    f'UMH {row.get("UMH Number","")} - {row.get("Title","")}'
-                    for row in matches
-                ]
-                selected = st.selectbox("Select hymn", options)
-
-                if st.button("Load Hymn by Title"):
-                    chosen_index = options.index(selected)
-                    match = matches[chosen_index]
-                    load_song_into_editor_from_repository(match)
-                    st.success("Hymn loaded.")
-                    st.rerun()
-            else:
-                st.info("No matching titles found.")
-
-    st.markdown("---")
-    st.subheader("Song Editor")
-
-    edit_idx = st.session_state.get("editing_setlist_index")
-    if edit_idx is not None:
-        st.info(f"Editing setlist item #{edit_idx + 1}")
-
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.text_input("UMH", key="editor_umh")
-    with col2:
-        st.text_input("Title", key="editor_title")
-
-    st.markdown("#### Slide Splitting")
-
-    st.checkbox(
-        "Auto split by lines per slide",
-        key="auto_split_by_lines"
-    )
-
-    st.slider(
-        "Lines per slide",
-        min_value=1,
-        max_value=8,
-        key="lines_per_slide"
-    )
-
-    editor_text = st.text_area(
-        "Edit lyrics for this service (leave blank lines between verses)",
-        height=420,
-        key="editor_text_box"
-    )
-
-    st.session_state["editor_text"] = editor_text
-
-    if st.session_state["auto_split_by_lines"]:
-        current_slides = split_slides_by_line_count_with_verse_separators(
-            editor_text,
-            lines_per_slide=st.session_state["lines_per_slide"]
-        )
-        st.caption(
-            f"{len(current_slides)} slide(s) for current song "
-            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
-        )
-    else:
-        current_slides = split_slides(editor_text)
-        st.caption(
-            f"{len(current_slides)} slide(s) for current song "
-            f"(manual mode: blank lines separate slides)"
-        )
-
-    st.markdown("#### Song Formatting")
-
-    st.checkbox(
-        "Override title font size for this song",
-        key="editor_override_title_font_size"
-    )
-    if st.session_state["editor_override_title_font_size"]:
-        st.slider(
-            "Title font size (pt)",
-            min_value=12,
-            max_value=60,
-            key="editor_title_font_size_pt"
-        )
-    else:
-        st.caption("Title font size: using template default")
-
-    st.checkbox(
-        "Override lyrics font size for this song",
-        key="editor_override_lyrics_font_size"
-    )
-    if st.session_state["editor_override_lyrics_font_size"]:
-        st.slider(
-            "Lyrics font size (pt)",
-            min_value=12,
-            max_value=60,
-            key="editor_lyrics_font_size_pt"
-        )
-    else:
-        st.caption("Lyrics font size: using template default")
-
-    st.checkbox(
-        "Override line spacing for this song",
-        key="editor_override_line_spacing"
-    )
-    if st.session_state["editor_override_line_spacing"]:
-        st.slider(
-            "Line spacing",
-            min_value=0.8,
-            max_value=2.0,
-            step=0.1,
-            key="editor_line_spacing"
-        )
-    else:
-        st.caption("Line spacing: using template default")
-
-    allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
-
-    button_label = (
-        "Update Song in Setlist"
-        if edit_idx is not None
-        else "Add Song to Setlist"
-    )
-
-    if st.button(button_label):
-        if current_slides:
-            item = {
-                "umh_number": st.session_state.get("editor_umh", "").strip(),
-                "title": st.session_state.get("editor_title", "").strip(),
-                "slides": current_slides,
-
-                "title_font_size_pt": (
-                    st.session_state.get("editor_title_font_size_pt")
-                    if st.session_state.get("editor_override_title_font_size")
-                    else None
-                ),
-                "lyrics_font_size_pt": (
-                    st.session_state.get("editor_lyrics_font_size_pt")
-                    if st.session_state.get("editor_override_lyrics_font_size")
-                    else None
-                ),
-                "line_spacing": (
-                    st.session_state.get("editor_line_spacing")
-                    if st.session_state.get("editor_override_line_spacing")
-                    else None
-                ),
-
-                "override_title_font_size": st.session_state.get(
-                    "editor_override_title_font_size"
-                ),
-                "override_lyrics_font_size": st.session_state.get(
-                    "editor_override_lyrics_font_size"
-                ),
-                "override_line_spacing": st.session_state.get(
-                    "editor_override_line_spacing"
-                ),
-            }
-
-            edit_idx = st.session_state.get("editing_setlist_index")
-
-            if edit_idx is None:
-                duplicate_index = next(
-                    (
-                        i for i, s in enumerate(st.session_state["setlist"])
-                        if s["umh_number"] == item["umh_number"]
-                        and s["title"] == item["title"]
-                        and s["slides"] == item["slides"]
-                    ),
-                    None
-                )
-
-                if duplicate_index is not None and not allow_duplicates:
-                    st.warning(
-                        f"This song is already in the setlist as item #{duplicate_index + 1}."
-                    )
-                else:
-                    st.session_state["setlist"].append(item)
-                    st.session_state["ppt_data"] = None
-                    st.session_state["preview_images"] = None
-                    st.success(
-                        f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                    )
-                    st.session_state["reset_editor_pending"] = True
-                    st.rerun()
-            else:
-                st.session_state["setlist"][edit_idx] = item
-                st.session_state["editing_setlist_index"] = None
-                st.session_state["ppt_data"] = None
-                st.session_state["preview_images"] = None
-                st.success(
-                    f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                )
-                st.session_state["reset_editor_pending"] = True
-                st.rerun()
+    if refresh_now:
+        st.session_state["preview_slides"] = get_current_slides(new_text)
+        if st.session_state["refresh_on_enter_only"]:
+            st.session_state["last_preview_reason"] = "Preview refreshed because a new line was added."
         else:
-            st.error("No slides to add.")
+            st.session_state["last_preview_reason"] = "Preview refreshed because text changed."
 
-    if st.button("Clear Current Editor"):
-        st.session_state["reset_editor_pending"] = True
-        st.rerun()
+    elif not st.session_state["preview_slides"] and new_text.strip():
+        st.session_state["preview_slides"] = get_current_slides(new_text)
+        st.session_state["last_preview_reason"] = "Initial preview generated."
 
-with right_col:
-    st.subheader("Current Setlist")
+    st.session_state["last_text"] = new_text
 
-    if st.session_state["setlist"]:
-        remove_index = None
+    st.caption(
+        "With the setting turned on, the preview refreshes only when the editor gains a new line."
+    )
 
-        for i, song in enumerate(st.session_state["setlist"]):
-            if song["umh_number"]:
-                label = f'UMH {song["umh_number"]} {song["title"]}'
-            else:
-                label = song["title"]
+with right:
+    st.subheader("Slide preview")
+    slides = st.session_state["preview_slides"]
 
-            total_slides = len(song["slides"])
-            col_title, col_edit, col_up, col_down, col_delete = st.columns(
-                [12, 1, 1, 1, 1],
-                gap="small"
-            )
+    st.caption(f"{len(slides)} slide(s)")
+    st.caption(st.session_state["last_preview_reason"])
 
-            with col_title:
-                st.markdown(f"**{i+1}. {label} ({total_slides})**")
+    preview_html = render_slide_preview_html(slides)
+    st.components.v1.html(preview_html, height=780, scrolling=False)
 
-            with col_edit:
-                if st.button("✏️", key=f"edit_{i}"):
-                    st.session_state["pending_setlist_load"] = i
-                    st.rerun()
+# -----------------------------
+# Download PPTX
+# -----------------------------
+slides_for_export = get_current_slides(st.session_state["editor_text"])
 
-            with col_up:
-                if st.button("↑", key=f"up_{i}") and i > 0:
-                    st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
-                        st.session_state["setlist"][i],
-                        st.session_state["setlist"][i - 1],
-                    )
-                    st.session_state["ppt_data"] = None
-                    st.session_state["preview_images"] = None
+if slides_for_export:
+    pptx_data = build_pptx(slides_for_export, st.session_state["deck_title"])
+    st.download_button(
+        label="Download PowerPoint (.pptx)",
+        data=pptx_data,
+        file_name="live_service_deck.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
 
-                    current_edit = st.session_state.get("editing_setlist_index")
-                    if current_edit == i:
-                        st.session_state["editing_setlist_index"] = i - 1
-                    elif current_edit == i - 1:
-                        st.session_state["editing_setlist_index"] = i
-
-                    st.rerun()
-
-            with col_down:
-                if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
-                    st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
-                        st.session_state["setlist"][i],
-                        st.session_state["setlist"][i + 1],
-                    )
-                    st.session_state["ppt_data"] = None
-                    st.session_state["preview_images"] = None
-
-                    current_edit = st.session_state.get("editing_setlist_index")
-                    if current_edit == i:
-                        st.session_state["editing_setlist_index"] = i + 1
-                    elif current_edit == i + 1:
-                        st.session_state["editing_setlist_index"] = i
-
-                    st.rerun()
-
-            with col_delete:
-                if st.button("🗑", key=f"delete_{i}"):
-                    remove_index = i
-
-        if remove_index is not None:
-            st.session_state["setlist"].pop(remove_index)
-            st.session_state["ppt_data"] = None
-            st.session_state["preview_images"] = None
-
-            current_edit = st.session_state.get("editing_setlist_index")
-            if current_edit == remove_index:
-                st.session_state["reset_editor_pending"] = True
-            elif current_edit is not None and current_edit > remove_index:
-                st.session_state["editing_setlist_index"] = current_edit - 1
-
-            pending = st.session_state.get("pending_setlist_load")
-            if pending == remove_index:
-                st.session_state["pending_setlist_load"] = None
-            elif pending is not None and pending > remove_index:
-                st.session_state["pending_setlist_load"] = pending - 1
-
-            st.rerun()
-
-        col1, col2 = st.columns(2)
-
-        if col1.button("Generate Service Preview"):
-            if selected_template_bytes is None:
-                st.error("Please upload and select a template first.")
-            elif not selected_template_ok:
-                st.error("Cannot generate preview because the selected template is invalid.")
-            else:
-                try:
-                    ppt_data = create_combined_ppt(
-                        st.session_state["setlist"],
-                        selected_template_bytes,
-                    )
-                    preview_images = pptx_to_preview_images(ppt_data)
-
-                    st.session_state["ppt_data"] = ppt_data
-                    st.session_state["preview_images"] = preview_images
-                    st.success("Service preview generated.")
-                except Exception as e:
-                    st.error(f"Preview generation failed: {e}")
-
-        if col2.button("Clear Setlist"):
-            st.session_state["setlist"] = []
-            st.session_state["ppt_data"] = None
-            st.session_state["preview_images"] = None
-            st.session_state["editing_setlist_index"] = None
-            st.session_state["pending_setlist_load"] = None
-            st.session_state["reset_editor_pending"] = True
-            st.rerun()
-
-        if st.session_state["ppt_data"] is not None:
-            st.download_button(
-                label="Download Service PowerPoint",
-                data=st.session_state["ppt_data"],
-                file_name="service_deck.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-
-        st.subheader("PowerPoint Preview")
-        if st.session_state["preview_images"]:
-            render_scrollable_images(st.session_state["preview_images"])
-        else:
-            st.info("Generate the service preview to see the slide images.")
-    else:
-        st.info("No songs added yet.")
+with st.expander("Current parsed slide data"):
+    st.json({"slides": slides_for_export})
