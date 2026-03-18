@@ -394,7 +394,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
         badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
-        <div id="slide-{i}" style="margin-bottom: 24px;">
+        <div class="slide-block" data-slide-number="{i}" id="slide-{i}" style="margin-bottom: 24px;">
             <div style="font-weight: 600; margin-bottom: 8px;">
                 Slide {i}{badge}
             </div>
@@ -411,51 +411,96 @@ def render_scrollable_images(images, height=760, active_slide=None):
     <script>
     const container = document.getElementById("{container_id}");
     const activeSlide = {active_slide_js};
-    const scrollKey = "current-song-preview-scroll";
+    const slideKey = "current-song-preview-visible-slide";
 
-    function saveScroll() {{
-        if (container) {{
-            sessionStorage.setItem(scrollKey, container.scrollTop);
-        }}
+    function getSlideBlocks() {{
+        return Array.from(container.querySelectorAll(".slide-block"));
     }}
 
-    function restoreScroll() {{
-        const saved = sessionStorage.getItem(scrollKey);
-        if (container && saved !== null) {{
-            container.scrollTop = parseInt(saved, 10);
-        }}
+    function clampSlide(slideNum) {{
+        const blocks = getSlideBlocks();
+        if (blocks.length === 0) return 1;
+        return Math.max(1, Math.min(slideNum, blocks.length));
     }}
 
-    function scrollToActiveSlide() {{
-        if (!container || activeSlide === null) return;
+    function getSavedVisibleSlide() {{
+        const saved = sessionStorage.getItem(slideKey);
+        if (!saved) return 1;
+        const parsed = parseInt(saved, 10);
+        if (isNaN(parsed)) return 1;
+        return clampSlide(parsed);
+    }}
 
-        const target = document.getElementById("slide-" + activeSlide);
-        if (!target) return;
+    function saveVisibleSlide(slideNum) {{
+        sessionStorage.setItem(slideKey, String(clampSlide(slideNum)));
+    }}
+
+    function getTopVisibleSlide() {{
+        const blocks = getSlideBlocks();
+        if (!container || blocks.length === 0) return 1;
+
+        const containerRect = container.getBoundingClientRect();
+        let bestSlide = 1;
+        let bestDistance = Infinity;
+
+        blocks.forEach(block => {{
+            const rect = block.getBoundingClientRect();
+            const distance = Math.abs(rect.top - containerRect.top - 12);
+            const slideNum = parseInt(block.dataset.slideNumber, 10);
+
+            if (distance < bestDistance) {{
+                bestDistance = distance;
+                bestSlide = slideNum;
+            }}
+        }});
+
+        return clampSlide(bestSlide);
+    }}
+
+    function jumpToSlide(slideNum, smooth) {{
+        const target = document.getElementById("slide-" + clampSlide(slideNum));
+        if (!container || !target) return;
 
         const top = target.offsetTop - 12;
-        container.scrollTop = top;
-        saveScroll();
+
+        if (smooth) {{
+            container.scrollTo({{
+                top: top,
+                behavior: "smooth"
+            }});
+        }} else {{
+            container.scrollTop = top;
+        }}
+    }}
+
+    function handleScroll() {{
+        saveVisibleSlide(getTopVisibleSlide());
     }}
 
     if (container) {{
-        container.addEventListener("scroll", saveScroll);
+        container.addEventListener("scroll", handleScroll);
     }}
 
     setTimeout(() => {{
+        const oldSlide = getSavedVisibleSlide();
+
         if (activeSlide !== null) {{
-            scrollToActiveSlide();
+            jumpToSlide(oldSlide, false);
+            setTimeout(() => {{
+                jumpToSlide(activeSlide, true);
+                setTimeout(() => {{
+                    saveVisibleSlide(activeSlide);
+                }}, 500);
+            }}, 150);
         }} else {{
-            restoreScroll();
+            jumpToSlide(oldSlide, false);
+            saveVisibleSlide(oldSlide);
         }}
     }}, 500);
     </script>
     """
 
     st.components.v1.html(html, height=height, scrolling=False)
-
-
-
-
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state.get("editor_umh", "").strip(),
@@ -616,7 +661,7 @@ def apply_pending_setlist_load():
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["editor_ace_key"] += 1
-    st.session_state["current_preview_slide"] = None
+    st.session_state["current_preview_slide"] = 1
 
 
 def reset_editor_for_new_song():
