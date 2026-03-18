@@ -878,92 +878,112 @@ with st.container():
 
     with setlist_col:
         st.subheader("Current Setlist")
-
+    
         if st.session_state["setlist"]:
             remove_index = None
-
-            for i, song in enumerate(st.session_state["setlist"]):
-                if song["umh_number"]:
-                    label = f'UMH {song["umh_number"]} {song["title"]}'
-                else:
-                    label = song["title"]
-
-                total_slides = len(song["slides"])
-                col_title, col_edit, col_up, col_down, col_delete = st.columns(
-                    [12, 1, 1, 1, 1],
-                    gap="small"
-                )
-
-                with col_title:
-                    st.markdown(f"**{i+1}. {label} ({total_slides})**")
-
-                with col_edit:
-                    if st.button("✏️", key=f"edit_{i}"):
-                        st.session_state["pending_setlist_load"] = i
-                        st.rerun()
-
-                with col_up:
-                    if st.button("↑", key=f"up_{i}") and i > 0:
-                        st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
-                            st.session_state["setlist"][i],
-                            st.session_state["setlist"][i - 1],
-                        )
-                        st.session_state["ppt_data"] = None
-                        st.session_state["preview_images"] = None
-                        st.session_state["current_song_preview_images"] = None
-
-                        current_edit = st.session_state.get("editing_setlist_index")
-                        if current_edit == i:
-                            st.session_state["editing_setlist_index"] = i - 1
-                        elif current_edit == i - 1:
-                            st.session_state["editing_setlist_index"] = i
-
-                        st.rerun()
-
-                with col_down:
-                    if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
-                        st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
-                            st.session_state["setlist"][i],
-                            st.session_state["setlist"][i + 1],
-                        )
-                        st.session_state["ppt_data"] = None
-                        st.session_state["preview_images"] = None
-                        st.session_state["current_song_preview_images"] = None
-
-                        current_edit = st.session_state.get("editing_setlist_index")
-                        if current_edit == i:
-                            st.session_state["editing_setlist_index"] = i + 1
-                        elif current_edit == i + 1:
-                            st.session_state["editing_setlist_index"] = i
-
-                        st.rerun()
-
-                with col_delete:
-                    if st.button("🗑", key=f"delete_{i}"):
-                        remove_index = i
-
+    
+            setlist_container = st.container(height=420)
+    
+            with setlist_container:
+                for i, song in enumerate(st.session_state["setlist"]):
+                    current_edit = st.session_state.get("editing_setlist_index")
+                    is_current = current_edit == i
+    
+                    if song["umh_number"]:
+                        label = f'UMH {song["umh_number"]} {song["title"]}'
+                    else:
+                        label = song["title"]
+    
+                    total_slides = len(song["slides"])
+    
+                    row_bg = "#e0f2fe" if is_current else "#ffffff"
+                    row_border = "2px solid #2563eb" if is_current else "1px solid #e5e7eb"
+                    row_badge = " (Currently Editing)" if is_current else ""
+    
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: {row_bg};
+                            border: {row_border};
+                            border-radius: 8px;
+                            padding: 8px 10px;
+                            margin-bottom: 8px;
+                        ">
+                            <strong>{i+1}. {label} ({total_slides}){row_badge}</strong>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+    
+                    col_edit, col_up, col_down, col_delete = st.columns([1, 1, 1, 1], gap="small")
+    
+                    with col_edit:
+                        if st.button("✏️", key=f"edit_{i}"):
+                            st.session_state["pending_setlist_load"] = i
+                            st.rerun()
+    
+                    with col_up:
+                        if st.button("↑", key=f"up_{i}") and i > 0:
+                            st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
+                                st.session_state["setlist"][i],
+                                st.session_state["setlist"][i - 1],
+                            )
+                            st.session_state["ppt_data"] = None
+                            st.session_state["preview_images"] = None
+                            st.session_state["current_song_preview_images"] = None
+    
+                            current_edit = st.session_state.get("editing_setlist_index")
+                            if current_edit == i:
+                                st.session_state["editing_setlist_index"] = i - 1
+                            elif current_edit == i - 1:
+                                st.session_state["editing_setlist_index"] = i
+    
+                            st.rerun()
+    
+                    with col_down:
+                        if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
+                            st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
+                                st.session_state["setlist"][i],
+                                st.session_state["setlist"][i + 1],
+                            )
+                            st.session_state["ppt_data"] = None
+                            st.session_state["preview_images"] = None
+                            st.session_state["current_song_preview_images"] = None
+    
+                            current_edit = st.session_state.get("editing_setlist_index")
+                            if current_edit == i:
+                                st.session_state["editing_setlist_index"] = i + 1
+                            elif current_edit == i + 1:
+                                st.session_state["editing_setlist_index"] = i
+    
+                            st.rerun()
+    
+                    with col_delete:
+                        if st.button("🗑", key=f"delete_{i}"):
+                            remove_index = i
+    
             if remove_index is not None:
                 st.session_state["setlist"].pop(remove_index)
                 st.session_state["ppt_data"] = None
                 st.session_state["preview_images"] = None
                 st.session_state["current_song_preview_images"] = None
-
+    
                 current_edit = st.session_state.get("editing_setlist_index")
                 if current_edit == remove_index:
                     st.session_state["reset_editor_pending"] = True
                 elif current_edit is not None and current_edit > remove_index:
                     st.session_state["editing_setlist_index"] = current_edit - 1
-
+    
                 pending = st.session_state.get("pending_setlist_load")
                 if pending == remove_index:
                     st.session_state["pending_setlist_load"] = None
                 elif pending is not None and pending > remove_index:
                     st.session_state["pending_setlist_load"] = pending - 1
-
+    
                 st.rerun()
-
+    
             col1, col2 = st.columns(2)
-
+    
             if col1.button("Generate Service Preview"):
                 if selected_template_bytes is None:
                     st.error("Please upload and select a template first.")
@@ -979,7 +999,7 @@ with st.container():
                         st.success("Service preview generated.")
                     except Exception as e:
                         st.error(f"Preview generation failed: {e}")
-
+    
             if col2.button("Clear Setlist"):
                 st.session_state["setlist"] = []
                 st.session_state["ppt_data"] = None
@@ -989,7 +1009,7 @@ with st.container():
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["reset_editor_pending"] = True
                 st.rerun()
-
+    
             if st.session_state["ppt_data"] is not None:
                 download_data = (
                     st.session_state["ppt_data"].getvalue()
