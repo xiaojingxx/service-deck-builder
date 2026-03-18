@@ -1277,19 +1277,22 @@ with st.container():
             st.rerun()
 
 with preview_col:
+with preview_col:
     preview_mode_label = st.radio(
         "Preview Mode",
         ["🎵 Song", "📜 Service"],
         index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
         horizontal=True,
     )
-    
-    new_preview_mode = "song" if "Song" in preview_mode_label else "service"
-    
-    if new_preview_mode != st.session_state.get("preview_mode"):
-        st.session_state["preview_mode"] = new_preview_mode
-    
-        if new_preview_mode == "service":
+
+    selected_mode = "song" if "Song" in preview_mode_label else "service"
+    st.session_state["preview_mode"] = selected_mode
+
+    if selected_mode == "service":
+        st.subheader("Service Preview")
+        st.caption("📜 Full Service Deck")
+
+        if st.session_state.get("service_preview_images") is None:
             if selected_template_bytes is None:
                 st.error("Please upload and select a template first.")
             elif not selected_template_ok:
@@ -1297,7 +1300,7 @@ with preview_col:
             elif not soffice_available():
                 st.error("LibreOffice/soffice is not available.")
             elif not st.session_state["setlist"]:
-                st.info("Add songs to the setlist to view service preview.")
+                st.info("Add songs to the setlist to view the service preview.")
             else:
                 try:
                     refresh_service_preview(
@@ -1308,3 +1311,19 @@ with preview_col:
                         st.session_state["current_preview_slide"] = 1
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
+
+        preview_images = st.session_state.get("service_preview_images")
+
+    else:
+        st.subheader("Current Song Preview")
+        st.caption("🎵 Editing Current Song")
+        preview_images = st.session_state.get("current_song_preview_images")
+
+    if preview_images is not None and len(preview_images) > 0:
+        render_scrollable_images(
+            preview_images,
+            height=600,
+            active_slide=st.session_state.get("current_preview_slide"),
+        )
+    else:
+        st.info("Preview will appear here.")
