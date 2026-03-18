@@ -373,7 +373,7 @@ def pptx_to_preview_images(pptx_bytes):
 
 
 def render_scrollable_images(images, height=760, active_slide=None):
-    container_id = "scroll-container"
+    container_id = "current-song-scroll-container"
 
     html = f"""
     <div id="{container_id}" style="
@@ -411,32 +411,66 @@ def render_scrollable_images(images, height=760, active_slide=None):
         html += f"""
         <script>
         const container = document.getElementById("{container_id}");
+        const target = document.getElementById("slide-{active_slide}");
+        const scrollKey = "{container_id}-scrollTop";
     
-        // restore previous scroll FIRST
-        const savedScroll = sessionStorage.getItem("scrollTop");
-        if (savedScroll !== null) {{
-            container.scrollTop = parseInt(savedScroll);
+        function restoreScroll() {{
+            const savedScroll = sessionStorage.getItem(scrollKey);
+            if (container && savedScroll !== null) {{
+                container.scrollTop = parseInt(savedScroll, 10);
+            }}
         }}
     
-        function scrollToSlide() {{
-            const target = document.getElementById("slide-{active_slide}");
+        function saveScroll() {{
+            if (container) {{
+                sessionStorage.setItem(scrollKey, container.scrollTop);
+            }}
+        }}
     
+        function scrollToTarget() {{
             if (container && target) {{
-                const offsetTop = target.offsetTop - container.offsetTop;
-    
-                container.scrollTo({{
-                    top: offsetTop - 20,
-                    behavior: "smooth"
+                target.scrollIntoView({{
+                    behavior: "smooth",
+                    block: "start"
                 }});
             }}
         }}
     
-        setTimeout(scrollToSlide, 200);
+        if (container) {{
+            restoreScroll();
+            container.addEventListener("scroll", saveScroll);
+        }}
     
-        // save scroll position on scroll
-        container.addEventListener("scroll", () => {{
-            sessionStorage.setItem("scrollTop", container.scrollTop);
-        }});
+        // wait for layout/images to settle, then move from restored position to active slide
+        setTimeout(() => {{
+            scrollToTarget();
+            setTimeout(saveScroll, 500);
+        }}, 400);
+        </script>
+        """
+    else:
+        html += f"""
+        <script>
+        const container = document.getElementById("{container_id}");
+        const scrollKey = "{container_id}-scrollTop";
+    
+        function restoreScroll() {{
+            const savedScroll = sessionStorage.getItem(scrollKey);
+            if (container && savedScroll !== null) {{
+                container.scrollTop = parseInt(savedScroll, 10);
+            }}
+        }}
+    
+        function saveScroll() {{
+            if (container) {{
+                sessionStorage.setItem(scrollKey, container.scrollTop);
+            }}
+        }}
+    
+        if (container) {{
+            restoreScroll();
+            container.addEventListener("scroll", saveScroll);
+        }}
         </script>
         """
 
