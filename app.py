@@ -1176,72 +1176,72 @@ with st.container():
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
 
-        if st.button("Refresh Current Song Preview"):
-            if selected_template_bytes is None:
-                st.error("Please upload and select a template first.")
-            elif not selected_template_ok:
-                st.error("Cannot preview because the selected template is invalid.")
-            elif not soffice_available():
-                st.error("LibreOffice/soffice is not available.")
-            elif not current_slides:
-                st.error("No slides to preview.")
-            else:
-                try:
-                    refresh_current_song_preview(song_item, selected_template_bytes)
-                    st.session_state["editor_status_message"] = "Current-song preview refreshed."
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Preview generation failed: {e}")
+    if st.button("Refresh Current Song Preview"):
+        if selected_template_bytes is None:
+            st.error("Please upload and select a template first.")
+        elif not selected_template_ok:
+            st.error("Cannot preview because the selected template is invalid.")
+        elif not soffice_available():
+            st.error("LibreOffice/soffice is not available.")
+        elif not current_slides:
+            st.error("No slides to preview.")
+        else:
+            try:
+                refresh_current_song_preview(song_item, selected_template_bytes)
+                st.session_state["editor_status_message"] = "Current-song preview refreshed."
+                st.rerun()
+            except Exception as e:
+                st.error(f"Preview generation failed: {e}")
 
-            allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
+    allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
-        button_label = (
-            "Update Song in Setlist"
-            if edit_idx is not None
-            else "Add Song to Setlist"
-        )
+    button_label = (
+        "Update Song in Setlist"
+        if edit_idx is not None
+        else "Add Song to Setlist"
+    )
 
-        if st.button(button_label):
-            if current_slides:
-                item = song_item
-                edit_idx = st.session_state.get("editing_setlist_index")
+    if st.button(button_label):
+        if current_slides:
+            item = song_item
+            edit_idx = st.session_state.get("editing_setlist_index")
 
-                if edit_idx is None:
-                    duplicate_index = next(
-                        (
-                            i for i, s in enumerate(st.session_state["setlist"])
-                            if s["umh_number"] == item["umh_number"]
-                            and s["title"] == item["title"]
-                            and s["slides"] == item["slides"]
-                        ),
-                        None
-                    )
+            if edit_idx is None:
+                duplicate_index = next(
+                    (
+                        i for i, s in enumerate(st.session_state["setlist"])
+                        if s["umh_number"] == item["umh_number"]
+                        and s["title"] == item["title"]
+                        and s["slides"] == item["slides"]
+                    ),
+                    None
+                )
 
-                    if duplicate_index is not None and not allow_duplicates:
-                        st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
-                    else:
-                        st.session_state["setlist"].append(item)
-                        st.session_state["ppt_data"] = None
-                        st.success(
-                            f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                        )
-                        st.session_state["reset_editor_pending"] = True
-                        st.rerun()
+                if duplicate_index is not None and not allow_duplicates:
+                    st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                 else:
-                    st.session_state["setlist"][edit_idx] = item
-                    st.session_state["editing_setlist_index"] = None
+                    st.session_state["setlist"].append(item)
                     st.session_state["ppt_data"] = None
                     st.success(
-                        f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                        f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                     )
                     st.session_state["reset_editor_pending"] = True
                     st.rerun()
             else:
-                st.error("No slides to add.")
+                st.session_state["setlist"][edit_idx] = item
+                st.session_state["editing_setlist_index"] = None
+                st.session_state["ppt_data"] = None
+                st.success(
+                    f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
+                )
+                st.session_state["reset_editor_pending"] = True
+                st.rerun()
+        else:
+            st.error("No slides to add.")
 
-        if st.button("Clear Current Editor"):
-            st.session_state["reset_editor_pending"] = True
-            st.rerun()
+    if st.button("Clear Current Editor"):
+        st.session_state["reset_editor_pending"] = True
+        st.rerun()
 
     with preview_col:
         st.subheader("Current Song Preview")
