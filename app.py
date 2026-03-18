@@ -1271,15 +1271,6 @@ with st.container():
             st.session_state["reset_editor_pending"] = True
             st.rerun()
 
-preview_mode = st.radio(
-    "Preview Mode",
-    ["Song", "Service"],
-    index=0 if st.session_state.get("preview_mode", "song") == "song" else 1,
-    horizontal=True,
-)
-
-st.session_state["preview_mode"] = "song" if preview_mode == "Song" else "service"
-
 with preview_col:
     # =========================
     # PREVIEW MODE TOGGLE (TOP)
