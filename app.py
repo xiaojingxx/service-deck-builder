@@ -1007,17 +1007,11 @@ with st.container():
         )
 
         old_text = st.session_state.get("last_editor_text", "")
-
-        if editor_text != old_text:
-            st.session_state["editor_text"] = editor_text
-            st.session_state["text_changed_flag"] = True
-
-        if st.session_state.get("text_changed_flag"):
-            st.session_state["text_changed_flag"] = False
-            st.rerun()
         
         if editor_text is None:
             editor_text = st.session_state.get("editor_text", "")
+        else:
+            st.session_state["editor_text"] = editor_text
 
         current_slides = get_current_slides(editor_text)
 
