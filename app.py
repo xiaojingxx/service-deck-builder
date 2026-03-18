@@ -900,11 +900,10 @@ with st.container():
                         [10, 1, 1, 1, 1], gap="small"
                     )
                     
-                    # 🎯 Strong highlight on title
+                    # ✅ Title (single line, no wrapping)
                     with row_col1:
                         bg = "#dbeafe" if is_current else "#ffffff"
                         border = "2px solid #1d4ed8" if is_current else "1px solid #e5e7eb"
-                        badge = " ✏️ Editing" if is_current else ""
                     
                         st.markdown(
                             f"""
@@ -914,21 +913,21 @@ with st.container():
                                 border-radius: 8px;
                                 padding: 6px 10px;
                                 margin-bottom: 6px;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
                             ">
-                                <strong>{i+1}. {label} ({total_slides}){badge}</strong>
+                                <strong>{i+1}. {label} ({total_slides})</strong>
                             </div>
                             """,
                             unsafe_allow_html=True,
                         )
                     
-                    # 🎯 Light highlight for buttons
+                    # ✅ Buttons (subtle highlight only)
                     button_bg = "#eff6ff" if is_current else "transparent"
                     
                     with row_col2:
-                        st.markdown(
-                            f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>",
-                            unsafe_allow_html=True
-                        )
+                        st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("✏️", key=f"edit_{i}"):
                             st.session_state["pending_setlist_load"] = i
                             st.rerun()
@@ -937,13 +936,21 @@ with st.container():
                     with row_col3:
                         st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↑", key=f"up_{i}") and i > 0:
-                            ...
+                            st.session_state["setlist"][i - 1], st.session_state["setlist"][i] = (
+                                st.session_state["setlist"][i],
+                                st.session_state["setlist"][i - 1],
+                            )
+                            st.rerun()
                         st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col4:
                         st.markdown(f"<div style='background:{button_bg}; padding:4px; border-radius:6px;'>", unsafe_allow_html=True)
                         if st.button("↓", key=f"down_{i}") and i < len(st.session_state["setlist"]) - 1:
-                            ...
+                            st.session_state["setlist"][i + 1], st.session_state["setlist"][i] = (
+                                st.session_state["setlist"][i],
+                                st.session_state["setlist"][i + 1],
+                            )
+                            st.rerun()
                         st.markdown("</div>", unsafe_allow_html=True)
                     
                     with row_col5:
