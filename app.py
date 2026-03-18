@@ -1367,7 +1367,7 @@ with preview_col:
         )
     
         # 🔥 ALWAYS try generate if missing
-        if not st.session_state.get("service_preview_images")
+        if not st.session_state.get("service_preview_images"):
             try:
                 refresh_service_preview(
                     st.session_state["setlist"],
