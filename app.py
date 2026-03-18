@@ -1007,10 +1007,6 @@ with st.sidebar:
                     clear_service_outputs()
                     st.rerun()
     
-            st.caption("✏️ Edit   ⬆️ Move up   ⬇️ Move down   🗑️ Delete")
-    
-            st.write("")
-    
             if st.button("Clear Setlist", use_container_width=True, type="secondary"):
                 st.session_state["setlist"] = []
                 st.session_state["editing_setlist_index"] = None
