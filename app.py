@@ -1068,23 +1068,32 @@ with st.container():
                 f"(manual mode: blank lines separate slides)"
             )
 
-        st.markdown("#### Song Formatting")
-
-        st.checkbox("Override title font size for this song", key="editor_override_title_font_size")
-        if st.session_state["editor_override_title_font_size"]:
-            st.slider("Title font size (pt)", min_value=12, max_value=60, key="editor_title_font_size_pt")
-        else:
-            st.caption("Title font size: using template default")
-
-        st.checkbox("Override lyrics font size for this song", key="editor_override_lyrics_font_size")
+    st.markdown("#### Song Formatting")
+    
+    fmt_col1, fmt_col2 = st.columns(2)
+    
+    with fmt_col1:
+        st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
-            st.slider("Lyrics font size (pt)", min_value=12, max_value=60, key="editor_lyrics_font_size_pt")
+            st.slider(
+                "Lyrics font size (pt)",
+                min_value=12,
+                max_value=60,
+                key="editor_lyrics_font_size_pt"
+            )
         else:
             st.caption("Lyrics font size: using template default")
-
-        st.checkbox("Override line spacing for this song", key="editor_override_line_spacing")
+    
+    with fmt_col2:
+        st.checkbox("Override line spacing", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
-            st.slider("Line spacing", min_value=0.8, max_value=2.0, step=0.1, key="editor_line_spacing")
+            st.slider(
+                "Line spacing",
+                min_value=0.8,
+                max_value=2.0,
+                step=0.1,
+                key="editor_line_spacing"
+            )
         else:
             st.caption("Line spacing: using template default")
 
@@ -1172,26 +1181,8 @@ with st.container():
 
         st.session_state["last_editor_text"] = editor_text
 
-        
         if st.session_state["editor_status_message"]:
             st.caption(st.session_state["editor_status_message"])
-
-    if st.button("Refresh Current Song Preview"):
-        if selected_template_bytes is None:
-            st.error("Please upload and select a template first.")
-        elif not selected_template_ok:
-            st.error("Cannot preview because the selected template is invalid.")
-        elif not soffice_available():
-            st.error("LibreOffice/soffice is not available.")
-        elif not current_slides:
-            st.error("No slides to preview.")
-        else:
-            try:
-                refresh_current_song_preview(song_item, selected_template_bytes)
-                st.session_state["editor_status_message"] = "Current-song preview refreshed."
-                st.rerun()
-            except Exception as e:
-                st.error(f"Preview generation failed: {e}")
 
     allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
 
@@ -1201,11 +1192,19 @@ with st.container():
         else "Add Song to Setlist"
     )
 
-    if st.button(button_label):
+    action_col1, action_col2 = st.columns(2)
+    
+    with action_col1:
+        add_clicked = st.button(button_label, use_container_width=True)
+    
+    with action_col2:
+        clear_clicked = st.button("Clear Current Editor", use_container_width=True)
+    
+    if add_clicked:
         if current_slides:
             item = song_item
             edit_idx = st.session_state.get("editing_setlist_index")
-
+    
             if edit_idx is None:
                 duplicate_index = next(
                     (
@@ -1216,7 +1215,7 @@ with st.container():
                     ),
                     None
                 )
-
+    
                 if duplicate_index is not None and not allow_duplicates:
                     st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                 else:
@@ -1238,8 +1237,8 @@ with st.container():
                 st.rerun()
         else:
             st.error("No slides to add.")
-
-    if st.button("Clear Current Editor"):
+    
+    if clear_clicked:
         st.session_state["reset_editor_pending"] = True
         st.rerun()
 
