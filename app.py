@@ -923,16 +923,25 @@ with st.sidebar:
                 len(labels) - 1,
             )
     
-            previous_selected_index = st.session_state["setlist_selected_index"]
-    
+            previous_selected_index = st.session_state.get("setlist_selected_index", 0)
+            
             selected_index = st.selectbox(
                 "Selected song",
                 options=list(range(len(labels))),
                 format_func=lambda i: labels[i],
-                index=st.session_state["setlist_selected_index"],
+                index=previous_selected_index,
                 key="setlist_selectbox_sidebar",
             )
+            
             st.session_state["setlist_selected_index"] = selected_index
+            
+            # If selection changed, load that song immediately into editor
+            if selected_index != previous_selected_index:
+                st.session_state["pending_setlist_load"] = selected_index
+                st.session_state["preview_mode"] = "song"
+                st.session_state["current_song_preview_images"] = None
+                st.session_state["last_current_song_signature"] = None
+                st.rerun()
     
             # If user is already in service mode, jump to this song's first slide
             if (
