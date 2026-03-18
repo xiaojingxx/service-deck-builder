@@ -776,7 +776,9 @@ def get_slide_number_from_line_index(
                 return slide_num
 
     return None
-    
+
+def blank_separator_added(old_text: str, new_text: str) -> bool:
+    return new_text.count("\n\n") > old_text.count("\n\n")
 
 # Must happen before widgets are created
 apply_pending_setlist_load()
