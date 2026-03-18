@@ -1356,7 +1356,6 @@ with preview_col:
     # =========================
     if selected_mode == "service":
         st.subheader("Service Preview")
-        st.write("Images:", st.session_state.get("service_preview_images"))
         st.caption("📜 Full Service Deck")
     
         can_generate = (
