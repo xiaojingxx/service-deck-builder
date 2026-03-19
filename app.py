@@ -1481,7 +1481,10 @@ with main_right:
             st.warning("LibreOffice/soffice is required for preview.")
 
         preview_images = st.session_state.get("current_song_preview_images")
-
+            
+        st.write("preview images:", None if preview_images is None else len(preview_images))
+        st.write("slide numbers:", st.session_state.get("current_song_preview_slide_numbers"))
+    
         if preview_images:
             render_scrollable_images(
                 preview_images,
@@ -1491,8 +1494,7 @@ with main_right:
             )
         else:
             st.info("Current song preview will appear here.")
-    st.write("preview images:", None if preview_images is None else len(preview_images))
-    st.write("slide numbers:", st.session_state.get("current_song_preview_slide_numbers"))
+
     else:
         st.caption("Full service deck preview")
 
