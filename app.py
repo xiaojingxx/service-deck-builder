@@ -971,11 +971,20 @@ with st.sidebar:
                 else:
                     labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
     
+            # Keep selected index valid
             st.session_state["setlist_selected_index"] = min(
                 st.session_state.get("setlist_selected_index", 0),
                 len(labels) - 1,
             )
     
+            # Apply pending selectbox change BEFORE widget is created
+            if "pending_setlist_selectbox_index" in st.session_state:
+                pending_index = st.session_state.pop("pending_setlist_selectbox_index")
+                pending_index = max(0, min(pending_index, len(labels) - 1))
+                st.session_state["setlist_selectbox_sidebar"] = pending_index
+                st.session_state["setlist_selected_index"] = pending_index
+    
+            # Initialize widget state only if missing / invalid
             if (
                 "setlist_selectbox_sidebar" not in st.session_state
                 or st.session_state["setlist_selectbox_sidebar"] >= len(labels)
@@ -1025,7 +1034,7 @@ with st.sidebar:
     
                     new_index = selected_index - 1
                     st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["setlist_selectbox_sidebar"] = new_index
+                    st.session_state["pending_setlist_selectbox_index"] = new_index
     
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
@@ -1054,7 +1063,7 @@ with st.sidebar:
     
                     new_index = selected_index + 1
                     st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["setlist_selectbox_sidebar"] = new_index
+                    st.session_state["pending_setlist_selectbox_index"] = new_index
     
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
@@ -1081,7 +1090,7 @@ with st.sidebar:
                         new_index = 0
     
                     st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["setlist_selectbox_sidebar"] = new_index
+                    st.session_state["pending_setlist_selectbox_index"] = new_index
     
                     if st.session_state.get("editing_setlist_index") == selected_index:
                         st.session_state["reset_editor_pending"] = True
@@ -1105,7 +1114,7 @@ with st.sidebar:
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
-                st.session_state["setlist_selectbox_sidebar"] = 0
+                st.session_state["pending_setlist_selectbox_index"] = 0
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 clear_service_outputs()
