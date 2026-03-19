@@ -1311,13 +1311,13 @@ with main_left:
     with fmt_col1:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
-        st.slider(
-            "Fontsize per song",
-            min_value=default.fontsize - 20,
-            max_value=default_fontsize + 20,
-            key="editor_fontsize_per_song",
-            on_change=lambda: st.session_state.update({"last_current_song_signature": None})
-        )
+            st.slider(
+                "Fontsize per song",
+                min_value=default.fontsize - 20,
+                max_value=default_fontsize + 20,
+                key="editor_fontsize_per_song",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+            )
         else:
             st.caption("Using template lyrics size")
 
