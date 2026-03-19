@@ -1273,23 +1273,21 @@ with main_left:
                 st.session_state["current_preview_slide"] = detected_slide
 
     should_refresh_preview = (
-        (text_changed and (
-            (st.session_state["refresh_on_new_line"] and trigger_refresh)
-            or (not st.session_state["refresh_on_new_line"])
-        ))
+        (
+            text_changed and (
+                (st.session_state["refresh_on_new_line"] and trigger_refresh)
+                or (not st.session_state["refresh_on_new_line"])
+            )
+        )
         or split_settings_changed
     ) and (
-        and selected_template_bytes is not None
+        selected_template_bytes is not None
         and selected_template_ok
         and soffice_available()
         and bool(current_slides)
-        and (
-            (st.session_state["refresh_on_new_line"] and trigger_refresh)
-            or (not st.session_state["refresh_on_new_line"])
-        )
         and new_signature != st.session_state.get("last_current_song_signature")
     )
-
+    
     if should_refresh_preview:
         try:
             refresh_current_song_preview(song_item, selected_template_bytes)
