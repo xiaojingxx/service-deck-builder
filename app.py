@@ -1349,22 +1349,22 @@ with main_left:
             st.caption(st.session_state["editor_status_message"])
 
     st.markdown("#### Song Formatting")
-
+    
     fmt_col1, fmt_col2 = st.columns(2)
-
+    
     with fmt_col1:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
             st.slider(
-                "Fontsize per song",
-                min_value=default.fontsize - 20,
-                max_value=default_fontsize + 20,
-                key="editor_fontsize_per_song",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+                "Lyrics font size (pt)",
+                min_value=12,
+                max_value=60,
+                key="editor_lyrics_font_size_pt",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
             )
         else:
             st.caption("Using template lyrics size")
-
+    
     with fmt_col2:
         st.checkbox("Override line spacing", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
@@ -1373,8 +1373,8 @@ with main_left:
                 min_value=0.8,
                 max_value=2.0,
                 step=0.1,
-                key="editor_line_spacing_per_song",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+                key="editor_line_spacing",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
             )
         else:
             st.caption("Using template line spacing")
