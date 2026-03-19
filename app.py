@@ -422,7 +422,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO, page_numbers=None, dpi=90, jpeg_
         doc.close()
         return images, rendered_page_numbers
     
-def refresh_current_song_preview(song_item, template_bytes, active_slide=1, window=0):
+def refresh_current_song_preview(song_item, template_bytes, active_slide=1, window=1):
     ppt_data = create_single_song_ppt(song_item, template_bytes)
 
     total_slides = len(song_item["slides"])
@@ -1256,7 +1256,7 @@ with main_left:
                     song_item,
                     selected_template_bytes,
                     active_slide=st.session_state.get("current_preview_slide", 1),
-                    window=0,
+                    window=1,
                 )
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
@@ -1335,7 +1335,7 @@ with main_left:
                 song_item,
                 selected_template_bytes,
                 active_slide=st.session_state.get("current_preview_slide", 1),
-                window=0,
+                window=1,
             )
             st.session_state["editor_status_message"] = "Song preview auto-refreshed."
         except Exception as e:
