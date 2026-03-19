@@ -538,6 +538,7 @@ def reset_editor():
     st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+    st.session_state["current_song_preview_slide_numbers"] = []
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = ""
     st.session_state["last_current_song_signature"] = None
@@ -1072,6 +1073,7 @@ with st.sidebar:
                     st.session_state["pending_setlist_load"] = selected_index
                     st.session_state["preview_mode"] = "song"
                     st.session_state["current_song_preview_images"] = None
+                    st.session_state["current_song_preview_slide_numbers"] = []
                     st.session_state["last_current_song_signature"] = None
                     st.rerun()
     
