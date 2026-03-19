@@ -421,7 +421,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO, page_numbers=None, dpi=90, jpeg_
 
         doc.close()
         return images, rendered_page_numbers
-
+    
 def refresh_current_song_preview(song_item, template_bytes, active_slide=1, window=0):
     ppt_data = create_single_song_ppt(song_item, template_bytes)
 
@@ -447,7 +447,11 @@ def refresh_current_song_preview(song_item, template_bytes, active_slide=1, wind
         st.session_state.get("selected_template_name"),
     )
 
-def render_scrollable_images(images, height=760, active_slide=None):
+
+def render_scrollable_images(images, slide_numbers=None, height=760, active_slide=None):
+    if slide_numbers is None:
+        slide_numbers = list(range(1, len(images) + 1))
+
     container_id = f"preview-scroll-container-{len(images)}"
     active_slide_js = "null" if active_slide is None else str(active_slide)
 
@@ -464,16 +468,16 @@ def render_scrollable_images(images, height=760, active_slide=None):
     ">
     """
 
-    for i, img_bytes in enumerate(images, start=1):
+    for img_bytes, slide_num in zip(images, slide_numbers):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
-        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " ← editing here" if active_slide == i else ""
+        border = "3px solid #2563eb" if active_slide == slide_num else "1px solid #ccc"
+        badge = " ← editing here" if active_slide == slide_num else ""
 
         html += f"""
-        <div id="slide-{i}" style="margin-bottom: 24px;">
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
+        <div id="slide-{slide_num}" style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {slide_num}{badge}</div>
             <img
-                src="data:image/png;base64,{b64}"
+                src="data:image/jpeg;base64,{b64}"
                 style="width: 100%; border: {border}; display: block;"
             />
         </div>
@@ -523,7 +527,6 @@ def render_scrollable_images(images, height=760, active_slide=None):
     """
 
     st.components.v1.html(html, height=height, scrolling=False)
-
 
 def reset_editor():
     st.session_state["loaded_song"] = None
