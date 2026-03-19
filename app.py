@@ -529,10 +529,8 @@ def load_song_into_editor(match):
     st.session_state["editor_title"] = str(match.get("Title", "")).strip()
     st.session_state["editor_text"] = lyrics_raw
 
-    st.session_state["editor_override_title_font_size"] = False
     st.session_state["editor_override_lyrics_font_size"] = False
     st.session_state["editor_override_line_spacing"] = False
-    st.session_state["editor_title_font_size_pt"] = 28
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
 
@@ -600,9 +598,6 @@ def apply_pending_setlist_load():
     st.session_state["editor_title"] = item["title"]
     st.session_state["editor_text"] = lyrics_text
 
-    st.session_state["editor_override_title_font_size"] = item.get(
-        "override_title_font_size", False
-    )
     st.session_state["editor_override_lyrics_font_size"] = item.get(
         "override_lyrics_font_size", False
     )
@@ -610,9 +605,6 @@ def apply_pending_setlist_load():
         "override_line_spacing", False
     )
 
-    st.session_state["editor_title_font_size_pt"] = (
-        item.get("title_font_size_pt", 28) or 28
-    )
     st.session_state["editor_lyrics_font_size_pt"] = (
         item.get("lyrics_font_size_pt", 32) or 32
     )
@@ -768,12 +760,12 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 def refresh_current_song_preview(song_item, template_bytes):
     ppt_data = create_single_song_ppt(song_item, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
+
     st.session_state["current_song_preview_images"] = preview_images
     st.session_state["last_current_song_signature"] = build_current_song_signature(
         song_item,
         st.session_state.get("selected_template_name"),
     )
-
 
 def get_service_song_start_slides(setlist):
     starts = []
@@ -1322,22 +1314,22 @@ with main_left:
             st.caption(st.session_state["editor_status_message"])
 
     st.markdown("#### Song Formatting")
-
+    
     fmt_col1, fmt_col2 = st.columns(2)
-
+    
     with fmt_col1:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
             st.slider(
-                "Fontsize per song",
-                min_value=default.fontsize - 20,
-                max_value=default_fontsize + 20,
-                key="editor_fontsize_per_song",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+                "Lyrics font size (pt)",
+                min_value=12,
+                max_value=60,
+                key="editor_lyrics_font_size_pt",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
             )
         else:
             st.caption("Using template lyrics size")
-
+    
     with fmt_col2:
         st.checkbox("Override line spacing", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
@@ -1346,8 +1338,8 @@ with main_left:
                 min_value=0.8,
                 max_value=2.0,
                 step=0.1,
-                key="editor_line_spacing_per_song",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+                key="editor_line_spacing",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
             )
         else:
             st.caption("Using template line spacing")
