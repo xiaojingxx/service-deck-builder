@@ -558,7 +558,7 @@ def load_song_into_editor(match):
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
     else:
         if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. Select a template to see preview."
+            st.session_state["editor_status_message"] = "Song loaded. ⚠️ Please select a template to generate preview."
         elif not soffice_available():
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
@@ -643,7 +643,7 @@ def apply_pending_setlist_load():
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
     else:
         if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. Select a template to see preview."
+            st.session_state["editor_status_message"] = "Song loaded. ⚠️ Please select a template to generate preview."
         elif not soffice_available():
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
@@ -1287,7 +1287,10 @@ with main_left:
     st.session_state["last_editor_text"] = editor_text
 
     if st.session_state["editor_status_message"]:
-        st.caption(st.session_state["editor_status_message"])
+        if "⚠️" in st.session_state["editor_status_message"]:
+            st.warning(st.session_state["editor_status_message"])
+        else:
+            st.caption(st.session_state["editor_status_message"])
 
     st.markdown("#### Song Formatting")
 
@@ -1400,6 +1403,14 @@ with main_right:
 
     if st.session_state["preview_mode"] == "song":
         st.caption("Current song preview")
+    
+        if selected_template_bytes is None:
+            st.warning("⚠️ Please upload and select a template to see preview.")
+        elif not selected_template_ok:
+            st.error("⚠️ Selected template is invalid.")
+        elif not soffice_available():
+            st.warning("⚠️ LibreOffice/soffice is required for preview.")
+        
         preview_images = st.session_state.get("current_song_preview_images")
 
     else:
