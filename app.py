@@ -89,6 +89,7 @@ DEFAULTS = {
     "service_preview_images": None,
     "service_song_start_slides": [],
     "ppt_data": None,
+    "last_split_settings": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -1228,7 +1229,14 @@ with main_left:
 
     text_changed = editor_text != old_text
     trigger_refresh = False
-
+    current_split_settings = (
+        st.session_state["auto_split_by_lines"],
+        st.session_state["lines_per_slide"],
+    )
+    
+    split_settings_changed = (
+        current_split_settings != st.session_state.get("last_split_settings")
+    )
     if st.session_state["auto_split_by_lines"]:
         trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
     else:
@@ -1265,7 +1273,12 @@ with main_left:
                 st.session_state["current_preview_slide"] = detected_slide
 
     should_refresh_preview = (
-        text_changed
+        (text_changed and (
+            (st.session_state["refresh_on_new_line"] and trigger_refresh)
+            or (not st.session_state["refresh_on_new_line"])
+        ))
+        or split_settings_changed
+    ) and (
         and selected_template_bytes is not None
         and selected_template_ok
         and soffice_available()
@@ -1285,6 +1298,7 @@ with main_left:
             st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
 
     st.session_state["last_editor_text"] = editor_text
+    st.session_state["last_split_settings"] = current_split_settings
 
     if st.session_state["editor_status_message"]:
         if "⚠️" in st.session_state["editor_status_message"]:
@@ -1299,12 +1313,13 @@ with main_left:
     with fmt_col1:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
-            st.slider(
-                "Lyrics font size (pt)",
-                min_value=12,
-                max_value=60,
-                key="editor_lyrics_font_size_pt",
-            )
+        st.slider(
+            "Fontsize per song",
+            min_value=default.fontsize - 20,
+            max_value=default_fontsize + 20,
+            key="editor_fontsize_per_song",
+            on_change=lambda: st.session_state.update({"last_current_song_signature": None})
+        )
         else:
             st.caption("Using template lyrics size")
 
@@ -1316,7 +1331,8 @@ with main_left:
                 min_value=0.8,
                 max_value=2.0,
                 step=0.1,
-                key="editor_line_spacing",
+                key="editor_line_spacing_per_song",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
             )
         else:
             st.caption("Using template line spacing")
