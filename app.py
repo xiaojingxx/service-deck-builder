@@ -449,7 +449,7 @@ def refresh_current_song_preview(song_item, template_bytes, active_slide=1, wind
 
 
 def render_scrollable_images(images, slide_numbers=None, height=760, active_slide=None):
-    if slide_numbers is None:
+    if not slide_numbers:
         slide_numbers = list(range(1, len(images) + 1))
 
     container_id = f"preview-scroll-container-{len(images)}"
@@ -527,7 +527,7 @@ def render_scrollable_images(images, slide_numbers=None, height=760, active_slid
     """
 
     st.components.v1.html(html, height=height, scrolling=False)
-
+    
 def reset_editor():
     st.session_state["loaded_song"] = None
     st.session_state["editing_setlist_index"] = None
