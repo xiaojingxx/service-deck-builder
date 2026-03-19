@@ -1470,9 +1470,6 @@ with main_right:
     
     preview_images = None
 
-    st.write("preview images:", None if preview_images is None else len(preview_images))
-    st.write("slide numbers:", st.session_state.get("current_song_preview_slide_numbers"))
-
     if st.session_state["preview_mode"] == "song":
         st.caption("Current song preview")
 
@@ -1494,7 +1491,8 @@ with main_right:
             )
         else:
             st.info("Current song preview will appear here.")
-
+    st.write("preview images:", None if preview_images is None else len(preview_images))
+    st.write("slide numbers:", st.session_state.get("current_song_preview_slide_numbers")))
     else:
         st.caption("Full service deck preview")
 
