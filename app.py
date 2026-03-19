@@ -1273,10 +1273,24 @@ with main_left:
             else:
                 st.session_state["setlist"][edit_idx] = item
                 clear_service_outputs()
+
+                if (
+                    selected_template_bytes is not None
+                    and selected_template_ok
+                    and soffice_available()
+                    and current_slides
+                ):
+                    try:
+                        refresh_current_song_preview(item, selected_template_bytes)
+                        st.session_state["current_preview_slide"] = 1
+                        st.session_state["preview_mode"] = "song"
+                        st.session_state["editor_status_message"] = "Song updated and preview refreshed."
+                    except Exception as e:
+                        st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+
                 st.success(
                     f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                 )
-                st.session_state["reset_editor_pending"] = True
                 st.rerun()
 
     if clear_editor:
