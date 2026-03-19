@@ -93,7 +93,6 @@ DEFAULTS = {
     "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
-    "current_song_preview_slide_numbers": [],
 }
 
 for key, value in DEFAULTS.items():
@@ -367,7 +366,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 def create_single_song_ppt(song_item, template_bytes: bytes):
     return create_combined_ppt([song_item], template_bytes)
 
-def pptx_to_preview_images(pptx_bytes: BytesIO, page_numbers=None, dpi=90, jpeg_quality=65):
+
+def pptx_to_preview_images(pptx_bytes: BytesIO):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
@@ -396,62 +396,28 @@ def pptx_to_preview_images(pptx_bytes: BytesIO, page_numbers=None, dpi=90, jpeg_
         pdf_path = os.path.join(tmpdir, pdf_files[0])
         doc = fitz.open(pdf_path)
 
-        if page_numbers is None:
-            page_numbers = list(range(len(doc)))
-        else:
-            page_numbers = sorted(set(p for p in page_numbers if 0 <= p < len(doc)))
-
         images = []
-        rendered_page_numbers = []
-
-        for pageno in page_numbers:
-            page = doc[pageno]
-            pix = page.get_pixmap(dpi=dpi)
-
-            mode = "RGB" if pix.alpha == 0 else "RGBA"
-            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-
-            if mode == "RGBA":
-                img = img.convert("RGB")
-
+        
+        for page in doc:
+            pix = page.get_pixmap(dpi=100)
+            img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            # Resize (reduce resolution)
+            img = img.resize(
+                (int(pix.width * 0.7), int(pix.height * 0.7)),
+                Image.LANCZOS
+            )
+            
             buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=jpeg_quality, optimize=True)
+            img.save(buffer, format="JPEG", quality=70)  # compress
             images.append(buffer.getvalue())
-            rendered_page_numbers.append(pageno + 1)  # store 1-based slide number
-
+            
         doc.close()
-        return images, rendered_page_numbers
-    
-def refresh_current_song_preview(song_item, template_bytes, active_slide=1, window=1):
-    ppt_data = create_single_song_ppt(song_item, template_bytes)
-
-    total_slides = len(song_item["slides"])
-    active_slide = max(1, min(active_slide, total_slides))
-
-    start_slide = max(1, active_slide - window)
-    end_slide = min(total_slides, active_slide + window)
-
-    page_numbers = [i - 1 for i in range(start_slide, end_slide + 1)]
-
-    preview_images, rendered_slide_numbers = pptx_to_preview_images(
-        ppt_data,
-        page_numbers=page_numbers,
-        dpi=90,
-        jpeg_quality=65,
-    )
-
-    st.session_state["current_song_preview_images"] = preview_images
-    st.session_state["current_song_preview_slide_numbers"] = rendered_slide_numbers
-    st.session_state["last_current_song_signature"] = build_current_song_signature(
-        song_item,
-        st.session_state.get("selected_template_name"),
-    )
+        return images
 
 
-def render_scrollable_images(images, slide_numbers=None, height=760, active_slide=None):
-    if not slide_numbers:
-        slide_numbers = list(range(1, len(images) + 1))
-
+def render_scrollable_images(images, height=760, active_slide=None):
     container_id = f"preview-scroll-container-{len(images)}"
     active_slide_js = "null" if active_slide is None else str(active_slide)
 
@@ -468,16 +434,16 @@ def render_scrollable_images(images, slide_numbers=None, height=760, active_slid
     ">
     """
 
-    for img_bytes, slide_num in zip(images, slide_numbers):
+    for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
-        border = "3px solid #2563eb" if active_slide == slide_num else "1px solid #ccc"
-        badge = " ← editing here" if active_slide == slide_num else ""
+        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
+        badge = " ← editing here" if active_slide == i else ""
 
         html += f"""
-        <div id="slide-{slide_num}" style="margin-bottom: 24px;">
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {slide_num}{badge}</div>
+        <div id="slide-{i}" style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
             <img
-                src="data:image/jpeg;base64,{b64}"
+                src="data:image/png;base64,{b64}"
                 style="width: 100%; border: {border}; display: block;"
             />
         </div>
@@ -527,7 +493,8 @@ def render_scrollable_images(images, slide_numbers=None, height=760, active_slid
     """
 
     st.components.v1.html(html, height=height, scrolling=False)
-    
+
+
 def reset_editor():
     st.session_state["loaded_song"] = None
     st.session_state["editing_setlist_index"] = None
@@ -538,7 +505,6 @@ def reset_editor():
     st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
-    st.session_state["current_song_preview_slide_numbers"] = []
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = ""
     st.session_state["last_current_song_signature"] = None
@@ -796,6 +762,17 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 
     return None
 
+
+def refresh_current_song_preview(song_item, template_bytes):
+    ppt_data = create_single_song_ppt(song_item, template_bytes)
+    preview_images = pptx_to_preview_images(ppt_data)
+    st.session_state["current_song_preview_images"] = preview_images
+    st.session_state["last_current_song_signature"] = build_current_song_signature(
+        song_item,
+        st.session_state.get("selected_template_name"),
+    )
+
+
 def get_service_song_start_slides(setlist):
     starts = []
     slide_counter = 1
@@ -807,7 +784,7 @@ def get_service_song_start_slides(setlist):
 
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
-    preview_images, _ = pptx_to_preview_images(ppt_data)
+    preview_images = pptx_to_preview_images(ppt_data)
 
     if not preview_images:
         raise RuntimeError("No preview images generated from service PPT")
@@ -1073,7 +1050,6 @@ with st.sidebar:
                     st.session_state["pending_setlist_load"] = selected_index
                     st.session_state["preview_mode"] = "song"
                     st.session_state["current_song_preview_images"] = None
-                    st.session_state["current_song_preview_slide_numbers"] = []
                     st.session_state["last_current_song_signature"] = None
                     st.rerun()
     
@@ -1252,12 +1228,7 @@ with main_left:
         else:
             try:
                 st.session_state["preview_mode"] = "song"
-                refresh_current_song_preview(
-                    song_item,
-                    selected_template_bytes,
-                    active_slide=st.session_state.get("current_preview_slide", 1),
-                    window=1,
-                )
+                refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
             except Exception as e:
@@ -1331,12 +1302,7 @@ with main_left:
     
     if should_refresh_preview:
         try:
-            refresh_current_song_preview(
-                song_item,
-                selected_template_bytes,
-                active_slide=st.session_state.get("current_preview_slide", 1),
-                window=1,
-            )
+            refresh_current_song_preview(song_item, selected_template_bytes)
             st.session_state["editor_status_message"] = "Song preview auto-refreshed."
         except Exception as e:
             st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
@@ -1351,22 +1317,22 @@ with main_left:
             st.caption(st.session_state["editor_status_message"])
 
     st.markdown("#### Song Formatting")
-    
+
     fmt_col1, fmt_col2 = st.columns(2)
-    
+
     with fmt_col1:
         st.checkbox("Override lyrics font size", key="editor_override_lyrics_font_size")
         if st.session_state["editor_override_lyrics_font_size"]:
             st.slider(
-                "Lyrics font size (pt)",
-                min_value=12,
-                max_value=60,
-                key="editor_lyrics_font_size_pt",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
+                "Fontsize per song",
+                min_value=default.fontsize - 20,
+                max_value=default_fontsize + 20,
+                key="editor_fontsize_per_song",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
             )
         else:
             st.caption("Using template lyrics size")
-    
+
     with fmt_col2:
         st.checkbox("Override line spacing", key="editor_override_line_spacing")
         if st.session_state["editor_override_line_spacing"]:
@@ -1375,8 +1341,8 @@ with main_left:
                 min_value=0.8,
                 max_value=2.0,
                 step=0.1,
-                key="editor_line_spacing",
-                on_change=lambda: st.session_state.update({"last_current_song_signature": None}),
+                key="editor_line_spacing_per_song",
+                on_change=lambda: st.session_state.update({"last_current_song_signature": None})
             )
         else:
             st.caption("Using template line spacing")
@@ -1458,33 +1424,20 @@ with main_right:
         horizontal=True,
     )
     st.session_state["preview_mode"] = preview_mode.lower()
-    
+
     preview_images = None
 
     if st.session_state["preview_mode"] == "song":
         st.caption("Current song preview")
-
-        if selected_template_bytes is None:
-            st.warning("Please upload and select a template to see preview.")
-        elif not selected_template_ok:
-            st.error("Selected template is invalid.")
-        elif not soffice_available():
-            st.warning("LibreOffice/soffice is required for preview.")
-
-        preview_images = st.session_state.get("current_song_preview_images")
-            
-        st.write("preview images:", None if preview_images is None else len(preview_images))
-        st.write("slide numbers:", st.session_state.get("current_song_preview_slide_numbers"))
     
-        if preview_images:
-            render_scrollable_images(
-                preview_images,
-                slide_numbers=st.session_state.get("current_song_preview_slide_numbers") or None,
-                height=700,
-                active_slide=st.session_state.get("current_preview_slide"),
-            )
-        else:
-            st.info("Current song preview will appear here.")
+        if selected_template_bytes is None:
+            st.warning("⚠️ Please upload and select a template to see preview.")
+        elif not selected_template_ok:
+            st.error("⚠️ Selected template is invalid.")
+        elif not soffice_available():
+            st.warning("⚠️ LibreOffice/soffice is required for preview.")
+        
+        preview_images = st.session_state.get("current_song_preview_images")
 
     else:
         st.caption("Full service deck preview")
@@ -1528,15 +1481,6 @@ with main_right:
 
             preview_images = st.session_state.get("service_preview_images")
 
-            if preview_images:
-                render_scrollable_images(
-                    preview_images,
-                    height=700,
-                    active_slide=st.session_state.get("current_preview_slide"),
-                )
-            else:
-                st.info("Service preview will appear here.")
-
             if st.session_state.get("ppt_data") is not None:
                 st.download_button(
                     label="Download Service PowerPoint",
@@ -1555,3 +1499,12 @@ with main_right:
                 st.info("LibreOffice/soffice is not available.")
             elif not st.session_state["setlist"]:
                 st.info("Add songs to the setlist to view the service preview.")
+
+    if preview_images:
+        render_scrollable_images(
+            preview_images,
+            height=860,
+            active_slide=st.session_state.get("current_preview_slide"),
+        )
+    else:
+        st.info("Preview will appear here.")
