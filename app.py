@@ -529,7 +529,7 @@ def load_song_into_editor(match):
     st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
 
-    # Generate preview immediately for newly loaded repository song
+    # Generate preview immediately
     if (
         st.session_state.get("selected_template_name")
         and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
@@ -548,9 +548,19 @@ def load_song_into_editor(match):
                     song_item = build_editor_song_item(current_slides)
                     refresh_current_song_preview(song_item, template_bytes)
                     st.session_state["current_preview_slide"] = 1
+                    st.session_state["preview_mode"] = "song"
                     st.session_state["editor_status_message"] = "Song preview loaded."
+                else:
+                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
+            else:
+                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
         except Exception as e:
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
+    else:
+        if not st.session_state.get("selected_template_name"):
+            st.session_state["editor_status_message"] = "Song loaded. Select a template to see preview."
+        elif not soffice_available():
+            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 def apply_pending_setlist_load():
     idx = st.session_state.get("pending_setlist_load")
@@ -575,7 +585,6 @@ def apply_pending_setlist_load():
     st.session_state["editor_title"] = item["title"]
     st.session_state["editor_text"] = lyrics_text
 
-    # Restore per-song formatting
     st.session_state["editor_override_title_font_size"] = item.get(
         "override_title_font_size", False
     )
@@ -605,7 +614,7 @@ def apply_pending_setlist_load():
     st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
 
-    # Generate current-song preview immediately after loading
+    # Generate preview immediately
     if (
         st.session_state.get("selected_template_name")
         and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
@@ -624,10 +633,19 @@ def apply_pending_setlist_load():
                     song_item = build_editor_song_item(current_slides)
                     refresh_current_song_preview(song_item, template_bytes)
                     st.session_state["current_preview_slide"] = 1
+                    st.session_state["preview_mode"] = "song"
                     st.session_state["editor_status_message"] = "Song preview loaded."
+                else:
+                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
+            else:
+                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
         except Exception as e:
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
-
+    else:
+        if not st.session_state.get("selected_template_name"):
+            st.session_state["editor_status_message"] = "Song loaded. Select a template to see preview."
+        elif not soffice_available():
+            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
     def valid_blank_positions(lines):
