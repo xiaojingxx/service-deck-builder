@@ -93,6 +93,7 @@ DEFAULTS = {
     "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
+    "current_song_preview_slide_numbers": [],
 }
 
 for key, value in DEFAULTS.items():
@@ -366,8 +367,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 def create_single_song_ppt(song_item, template_bytes: bytes):
     return create_combined_ppt([song_item], template_bytes)
 
-
-def pptx_to_preview_images(pptx_bytes: BytesIO):
+def pptx_to_preview_images(pptx_bytes: BytesIO, page_numbers=None, dpi=90, jpeg_quality=65):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
@@ -396,26 +396,56 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         pdf_path = os.path.join(tmpdir, pdf_files[0])
         doc = fitz.open(pdf_path)
 
-        images = []
-        
-        for page in doc:
-            pix = page.get_pixmap(dpi=100)
-            img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
-            # Resize (reduce resolution)
-            img = img.resize(
-                (int(pix.width * 0.7), int(pix.height * 0.7)),
-                Image.LANCZOS
-            )
-            
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=70)  # compress
-            images.append(buffer.getvalue())
-            
-        doc.close()
-        return images
+        if page_numbers is None:
+            page_numbers = list(range(len(doc)))
+        else:
+            page_numbers = sorted(set(p for p in page_numbers if 0 <= p < len(doc)))
 
+        images = []
+        rendered_page_numbers = []
+
+        for pageno in page_numbers:
+            page = doc[pageno]
+            pix = page.get_pixmap(dpi=dpi)
+
+            mode = "RGB" if pix.alpha == 0 else "RGBA"
+            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+
+            if mode == "RGBA":
+                img = img.convert("RGB")
+
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=jpeg_quality, optimize=True)
+            images.append(buffer.getvalue())
+            rendered_page_numbers.append(pageno + 1)  # store 1-based slide number
+
+        doc.close()
+        return images, rendered_page_numbers
+
+def refresh_current_song_preview(song_item, template_bytes, active_slide=1, window=0):
+    ppt_data = create_single_song_ppt(song_item, template_bytes)
+
+    total_slides = len(song_item["slides"])
+    active_slide = max(1, min(active_slide, total_slides))
+
+    start_slide = max(1, active_slide - window)
+    end_slide = min(total_slides, active_slide + window)
+
+    page_numbers = [i - 1 for i in range(start_slide, end_slide + 1)]
+
+    preview_images, rendered_slide_numbers = pptx_to_preview_images(
+        ppt_data,
+        page_numbers=page_numbers,
+        dpi=90,
+        jpeg_quality=65,
+    )
+
+    st.session_state["current_song_preview_images"] = preview_images
+    st.session_state["current_song_preview_slide_numbers"] = rendered_slide_numbers
+    st.session_state["last_current_song_signature"] = build_current_song_signature(
+        song_item,
+        st.session_state.get("selected_template_name"),
+    )
 
 def render_scrollable_images(images, height=760, active_slide=None):
     container_id = f"preview-scroll-container-{len(images)}"
@@ -1228,7 +1258,12 @@ with main_left:
         else:
             try:
                 st.session_state["preview_mode"] = "song"
-                refresh_current_song_preview(song_item, selected_template_bytes)
+                refresh_current_song_preview(
+                    song_item,
+                    selected_template_bytes,
+                    active_slide=st.session_state.get("current_preview_slide", 1),
+                    window=0,
+                )
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
             except Exception as e:
@@ -1302,7 +1337,12 @@ with main_left:
     
     if should_refresh_preview:
         try:
-            refresh_current_song_preview(song_item, selected_template_bytes)
+            refresh_current_song_preview(
+                song_item,
+                selected_template_bytes,
+                active_slide=st.session_state.get("current_preview_slide", 1),
+                window=0,
+            )
             st.session_state["editor_status_message"] = "Song preview auto-refreshed."
         except Exception as e:
             st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
