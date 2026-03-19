@@ -1488,7 +1488,7 @@ with main_right:
         if preview_images:
             render_scrollable_images(
                 preview_images,
-                slide_numbers=st.session_state.get("current_song_preview_slide_numbers"),
+                slide_numbers=st.session_state.get("current_song_preview_slide_numbers") or None,
                 height=700,
                 active_slide=st.session_state.get("current_preview_slide"),
             )
