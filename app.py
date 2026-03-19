@@ -960,7 +960,7 @@ with st.sidebar:
     # -------------------------
     with st.expander("3. Setlist", expanded=True):
         setlist = st.session_state["setlist"]
-
+    
         if not setlist:
             st.info("No songs added yet.")
         else:
@@ -970,23 +970,25 @@ with st.sidebar:
                     labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})')
                 else:
                     labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
-
+    
+            # Keep selected index valid
             st.session_state["setlist_selected_index"] = min(
                 st.session_state.get("setlist_selected_index", 0),
                 len(labels) - 1,
             )
-
+    
+            # Sync widget state with selected index
+            st.session_state["setlist_selectbox_sidebar"] = st.session_state["setlist_selected_index"]
             previous_selected_index = st.session_state["setlist_selected_index"]
-
+    
             selected_index = st.selectbox(
                 "Selected song",
                 options=list(range(len(labels))),
                 format_func=lambda i: labels[i],
-                index=st.session_state["setlist_selected_index"],
                 key="setlist_selectbox_sidebar",
             )
             st.session_state["setlist_selected_index"] = selected_index
-
+    
             # In service mode, changing selected song jumps to that song's first slide
             if (
                 selected_index != previous_selected_index
@@ -997,9 +999,9 @@ with st.sidebar:
                     starts[selected_index] if selected_index < len(starts) else 1
                 )
                 st.rerun()
-
+    
             action_cols = st.columns(4)
-
+    
             with action_cols[0]:
                 if st.button("✏️", use_container_width=True, help="Edit selected song"):
                     st.session_state["pending_setlist_load"] = selected_index
@@ -1007,7 +1009,7 @@ with st.sidebar:
                     st.session_state["current_song_preview_images"] = None
                     st.session_state["last_current_song_signature"] = None
                     st.rerun()
-
+    
             with action_cols[1]:
                 if (
                     st.button("⬆️", use_container_width=True, help="Move selected song up")
@@ -1017,23 +1019,26 @@ with st.sidebar:
                         setlist[selected_index],
                         setlist[selected_index - 1],
                     )
-                    st.session_state["setlist_selected_index"] = selected_index - 1
-
+    
+                    new_index = selected_index - 1
+                    st.session_state["setlist_selected_index"] = new_index
+                    st.session_state["setlist_selectbox_sidebar"] = new_index
+    
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
-                        st.session_state["editing_setlist_index"] = selected_index - 1
-                    elif editing_index == selected_index - 1:
+                        st.session_state["editing_setlist_index"] = new_index
+                    elif editing_index == new_index:
                         st.session_state["editing_setlist_index"] = selected_index
-
+    
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = selected_index - 1
-                    elif pending == selected_index - 1:
+                        st.session_state["pending_setlist_load"] = new_index
+                    elif pending == new_index:
                         st.session_state["pending_setlist_load"] = selected_index
-
+    
                     clear_service_outputs()
                     st.rerun()
-
+    
             with action_cols[2]:
                 if (
                     st.button("⬇️", use_container_width=True, help="Move selected song down")
@@ -1043,35 +1048,38 @@ with st.sidebar:
                         setlist[selected_index],
                         setlist[selected_index + 1],
                     )
-                    st.session_state["setlist_selected_index"] = selected_index + 1
-
+    
+                    new_index = selected_index + 1
+                    st.session_state["setlist_selected_index"] = new_index
+                    st.session_state["setlist_selectbox_sidebar"] = new_index
+    
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
-                        st.session_state["editing_setlist_index"] = selected_index + 1
-                    elif editing_index == selected_index + 1:
+                        st.session_state["editing_setlist_index"] = new_index
+                    elif editing_index == new_index:
                         st.session_state["editing_setlist_index"] = selected_index
-
+    
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = selected_index + 1
-                    elif pending == selected_index + 1:
+                        st.session_state["pending_setlist_load"] = new_index
+                    elif pending == new_index:
                         st.session_state["pending_setlist_load"] = selected_index
-
+    
                     clear_service_outputs()
                     st.rerun()
-
+    
             with action_cols[3]:
                 if st.button("🗑️", use_container_width=True, help="Delete selected song"):
                     setlist.pop(selected_index)
-
+    
                     if setlist:
-                        st.session_state["setlist_selected_index"] = min(
-                            selected_index,
-                            len(setlist) - 1,
-                        )
+                        new_index = min(selected_index, len(setlist) - 1)
                     else:
-                        st.session_state["setlist_selected_index"] = 0
-
+                        new_index = 0
+    
+                    st.session_state["setlist_selected_index"] = new_index
+                    st.session_state["setlist_selectbox_sidebar"] = new_index
+    
                     if st.session_state.get("editing_setlist_index") == selected_index:
                         st.session_state["reset_editor_pending"] = True
                     elif (
@@ -1079,21 +1087,22 @@ with st.sidebar:
                         and st.session_state["editing_setlist_index"] > selected_index
                     ):
                         st.session_state["editing_setlist_index"] -= 1
-
+    
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = None
                     elif pending is not None and pending > selected_index:
                         st.session_state["pending_setlist_load"] = pending - 1
-
+    
                     clear_service_outputs()
                     st.rerun()
-
+    
             if st.button("Clear Setlist", use_container_width=True, type="secondary"):
                 st.session_state["setlist"] = []
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
+                st.session_state["setlist_selectbox_sidebar"] = 0
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 clear_service_outputs()
