@@ -1469,15 +1469,25 @@ with main_right:
 
     if st.session_state["preview_mode"] == "song":
         st.caption("Current song preview")
-    
+
         if selected_template_bytes is None:
-            st.warning("⚠️ Please upload and select a template to see preview.")
+            st.warning("Please upload and select a template to see preview.")
         elif not selected_template_ok:
-            st.error("⚠️ Selected template is invalid.")
+            st.error("Selected template is invalid.")
         elif not soffice_available():
-            st.warning("⚠️ LibreOffice/soffice is required for preview.")
-        
+            st.warning("LibreOffice/soffice is required for preview.")
+
         preview_images = st.session_state.get("current_song_preview_images")
+
+        if preview_images:
+            render_scrollable_images(
+                preview_images,
+                slide_numbers=st.session_state.get("current_song_preview_slide_numbers"),
+                height=700,
+                active_slide=st.session_state.get("current_preview_slide"),
+            )
+        else:
+            st.info("Current song preview will appear here.")
 
     else:
         st.caption("Full service deck preview")
@@ -1521,6 +1531,15 @@ with main_right:
 
             preview_images = st.session_state.get("service_preview_images")
 
+            if preview_images:
+                render_scrollable_images(
+                    preview_images,
+                    height=700,
+                    active_slide=st.session_state.get("current_preview_slide"),
+                )
+            else:
+                st.info("Service preview will appear here.")
+
             if st.session_state.get("ppt_data") is not None:
                 st.download_button(
                     label="Download Service PowerPoint",
@@ -1539,12 +1558,3 @@ with main_right:
                 st.info("LibreOffice/soffice is not available.")
             elif not st.session_state["setlist"]:
                 st.info("Add songs to the setlist to view the service preview.")
-
-    if preview_images:
-        render_scrollable_images(
-            preview_images,
-            height=860,
-            active_slide=st.session_state.get("current_preview_slide"),
-        )
-    else:
-        st.info("Preview will appear here.")
