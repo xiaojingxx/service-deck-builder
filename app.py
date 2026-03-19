@@ -419,11 +419,58 @@ def render_scrollable_images(images, height=760, active_slide=None):
         st.info("Preview will appear here.")
         return
 
-    with st.container(border=True):
-        for i, img_bytes in enumerate(images, start=1):
-            badge = " ← editing here" if active_slide == i else ""
-            st.markdown(f"**Slide {i}{badge}**")
-            st.image(img_bytes, use_container_width=True)
+    container_id = f"preview-scroll-container-{len(images)}"
+    active_slide_js = "null" if active_slide is None else str(active_slide)
+
+    html = f"""
+    <div id="{container_id}" style="
+        height: {height}px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 12px;
+        border-radius: 8px;
+        background: #fafafa;
+        box-sizing: border-box;
+        scroll-behavior: smooth;
+    ">
+    """
+
+    for i, img_bytes in enumerate(images, start=1):
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
+        badge = " ← editing here" if active_slide == i else ""
+
+        html += f"""
+        <div id="slide-{i}" style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
+            <img
+                src="data:image/jpeg;base64,{b64}"
+                style="width: 100%; border: {border}; display: block;"
+            />
+        </div>
+        """
+
+    html += "</div>"
+
+    html += f"""
+    <script>
+    const container = document.getElementById("{container_id}");
+    const activeSlide = {active_slide_js};
+
+    function scrollToActiveSlide() {{
+        if (!container || activeSlide === null) return;
+        const target = document.getElementById("slide-" + activeSlide);
+        if (!target) return;
+        container.scrollTop = target.offsetTop - 12;
+    }}
+
+    setTimeout(() => {{
+        scrollToActiveSlide();
+    }}, 200);
+    </script>
+    """
+
+    st.components.v1.html(html, height=height, scrolling=False)
 
 
 def reset_editor():
