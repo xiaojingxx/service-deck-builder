@@ -2,6 +2,7 @@ import os
 import base64
 import tempfile
 import subprocess
+import io
 from io import BytesIO
 from shutil import which
 
@@ -13,6 +14,8 @@ from google.oauth2.service_account import Credentials
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
+import PIL.Image as Image
+
 
 
 # =========================================================
@@ -394,13 +397,22 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         doc = fitz.open(pdf_path)
 
         images = []
+        
         for page in doc:
             pix = page.get_pixmap(dpi=100)
             img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
-            pix.save(img_path)
-            with open(img_path, "rb") as f:
-                images.append(f.read())
-
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            # Resize (reduce resolution)
+            img = img.resize(
+                (int(pix.width * 0.7), int(pix.height * 0.7)),
+                Image.LANCZOS
+            )
+            
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=70)  # compress
+            images.append(buffer.getvalue())
+            
         doc.close()
         return images
 
