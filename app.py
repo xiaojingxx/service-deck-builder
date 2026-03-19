@@ -972,22 +972,29 @@ with st.sidebar:
                     labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
     
             # Keep selected index valid
-            st.session_state["setlist_selected_index"] = min(
-                st.session_state.get("setlist_selected_index", 0),
-                len(labels) - 1,
-            )
-    
-            # Sync widget state with selected index
+        # Keep selected index valid
+        st.session_state["setlist_selected_index"] = min(
+            st.session_state.get("setlist_selected_index", 0),
+            len(labels) - 1,
+        )
+
+        # Initialize widget state only when missing or invalid
+        if (
+            "setlist_selectbox_sidebar" not in st.session_state
+            or st.session_state["setlist_selectbox_sidebar"] >= len(labels)
+        ):
             st.session_state["setlist_selectbox_sidebar"] = st.session_state["setlist_selected_index"]
-            previous_selected_index = st.session_state["setlist_selected_index"]
-    
-            selected_index = st.selectbox(
-                "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                key="setlist_selectbox_sidebar",
-            )
-            st.session_state["setlist_selected_index"] = selected_index
+
+        previous_selected_index = st.session_state["setlist_selected_index"]
+
+        selected_index = st.selectbox(
+            "Selected song",
+            options=list(range(len(labels))),
+            format_func=lambda i: labels[i],
+            key="setlist_selectbox_sidebar",
+        )
+
+        st.session_state["setlist_selected_index"] = selected_index
     
             # In service mode, changing selected song jumps to that song's first slide
             if (
