@@ -1,5 +1,6 @@
 import os
 import io
+import base64
 import tempfile
 import subprocess
 from io import BytesIO
