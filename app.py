@@ -795,17 +795,6 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 
     return None
 
-
-def refresh_current_song_preview(song_item, template_bytes):
-    ppt_data = create_single_song_ppt(song_item, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
-    st.session_state["current_song_preview_images"] = preview_images
-    st.session_state["last_current_song_signature"] = build_current_song_signature(
-        song_item,
-        st.session_state.get("selected_template_name"),
-    )
-
-
 def get_service_song_start_slides(setlist):
     starts = []
     slide_counter = 1
@@ -817,7 +806,7 @@ def get_service_song_start_slides(setlist):
 
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
+    preview_images, _ = pptx_to_preview_images(ppt_data)
 
     if not preview_images:
         raise RuntimeError("No preview images generated from service PPT")
