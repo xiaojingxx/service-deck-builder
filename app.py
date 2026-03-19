@@ -395,7 +395,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         images = []
         for page in doc:
-            pix = page.get_pixmap(dpi=160)
+            pix = page.get_pixmap(dpi=100)
             img_path = os.path.join(tmpdir, f"slide_{page.number + 1}.png")
             pix.save(img_path)
             with open(img_path, "rb") as f:
