@@ -750,6 +750,13 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
+        debug_copy_path = "/tmp/debug_generated_preview.pptx"
+        try:
+            with open(debug_copy_path, "wb") as f:
+                f.write(pptx_bytes.getvalue())
+        except Exception:
+            debug_copy_path = None
+
         cmd = [
             SOFFICE_PATH,
             "--headless",
@@ -760,20 +767,44 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
+        st.caption("LibreOffice command:")
+        st.code(" ".join(cmd))
+
+        if debug_copy_path:
+            st.caption(f"Debug PPTX saved to: {debug_copy_path}")
+
+        st.caption(f"LibreOffice return code: {result.returncode}")
+
+        if result.stdout.strip():
+            with st.expander("LibreOffice stdout", expanded=False):
+                st.code(result.stdout)
+
+        if result.stderr.strip():
+            with st.expander("LibreOffice stderr", expanded=True):
+                st.code(result.stderr)
+
         if result.returncode != 0:
             raise RuntimeError(
-                "LibreOffice conversion failed.\n\n"
-                f"stdout:\n{result.stdout}\n\n"
-                f"stderr:\n{result.stderr}"
+                "LibreOffice conversion failed.\n"
+                f"Return code: {result.returncode}\n"
+                f"Debug PPTX: {debug_copy_path}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
             )
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
             raise FileNotFoundError(
-                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
+                "No PDF created.\n"
+                f"Debug PPTX: {debug_copy_path}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
             )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
+
+        st.caption(f"Generated PDF: {pdf_path}")
+
         doc = fitz.open(pdf_path)
 
         images = []
