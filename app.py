@@ -99,6 +99,7 @@ DEFAULTS = {
     "template_signature_for_sections": None,
     "service_section_start_slides": {},
     "service_preview_fallback_mode": False,
+    "service_preview_error": "",
 }
 
 for key, value in DEFAULTS.items():
@@ -120,6 +121,7 @@ def clear_service_outputs():
     st.session_state["service_preview_images"] = None
     st.session_state["service_section_start_slides"] = {}
     st.session_state["service_preview_fallback_mode"] = False
+    st.session_state["service_preview_error"] = ""
 
 
 def find_row_by_umh(umh_number: str):
@@ -658,36 +660,37 @@ def get_service_section_start_slides(sections):
 
 def refresh_service_preview(service_sections, template_bytes):
     st.session_state["service_preview_fallback_mode"] = False
+    st.session_state["service_preview_error"] = ""
 
     try:
         ppt_data = create_combined_ppt_from_sections(service_sections, template_bytes)
-        preview_images = pptx_to_preview_images(ppt_data)
-
-        if not preview_images:
-            raise RuntimeError("No preview images generated from service PPT")
-
         st.session_state["ppt_data"] = ppt_data
-        st.session_state["service_preview_images"] = preview_images
         st.session_state["service_section_start_slides"] = get_service_section_start_slides(service_sections)
+    except Exception as e:
+        st.session_state["ppt_data"] = None
+        st.session_state["service_preview_images"] = None
+        raise RuntimeError(f"PowerPoint generation failed:\n\n{e}")
 
-    except Exception as original_error:
+    try:
+        preview_images = pptx_to_preview_images(ppt_data)
+        st.session_state["service_preview_images"] = preview_images
+        return
+    except Exception as combined_preview_error:
         try:
-            ppt_data = create_songs_only_ppt_from_sections(service_sections, template_bytes)
-            preview_images = pptx_to_preview_images(ppt_data)
+            fallback_ppt_data = create_songs_only_ppt_from_sections(service_sections, template_bytes)
+            preview_images = pptx_to_preview_images(fallback_ppt_data)
 
-            if not preview_images:
-                raise RuntimeError("No preview images generated from fallback PPT")
-
-            st.session_state["ppt_data"] = ppt_data
             st.session_state["service_preview_images"] = preview_images
-            st.session_state["service_section_start_slides"] = {}
             st.session_state["service_preview_fallback_mode"] = True
-
+            st.session_state["service_preview_error"] = str(combined_preview_error)
+            return
         except Exception as fallback_error:
-            raise RuntimeError(
-                "Combined preview failed, and fallback songs-only preview also failed.\n\n"
-                f"Combined error:\n{original_error}\n\n"
-                f"Fallback error:\n{fallback_error}"
+            st.session_state["service_preview_images"] = None
+            st.session_state["service_preview_error"] = (
+                "Combined preview failed:\n\n"
+                f"{combined_preview_error}\n\n"
+                "Fallback songs-only preview failed:\n\n"
+                f"{fallback_error}"
             )
 
 
@@ -713,13 +716,19 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         if result.returncode != 0:
             raise RuntimeError(
-                f"LibreOffice conversion failed.\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+                "LibreOffice conversion failed.\n\n"
+                f"Return code: {result.returncode}\n\n"
+                f"stdout:\n{result.stdout}\n\n"
+                f"stderr:\n{result.stderr}"
             )
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
-            raise FileNotFoundError(
-                f"No PDF created. stdout={result.stdout} stderr={result.stderr}"
+            raise RuntimeError(
+                "No PDF created after LibreOffice conversion.\n\n"
+                f"Return code: {result.returncode}\n\n"
+                f"stdout:\n{result.stdout}\n\n"
+                f"stderr:\n{result.stderr}"
             )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
@@ -1640,16 +1649,21 @@ with main_right:
             )
 
             if need_refresh:
+                st.session_state["service_preview_error"] = ""
                 try:
                     refresh_service_preview(sections, selected_template_bytes)
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
 
+            if st.session_state.get("service_preview_error"):
+                st.warning("Preview rendering failed, but the PowerPoint may still be downloadable.")
+                with st.expander("Preview error details", expanded=False):
+                    st.code(st.session_state["service_preview_error"])
+
             if st.session_state.get("service_preview_fallback_mode"):
                 st.warning(
                     "Preview is showing songs-only mode because the uploaded template slides "
-                    "could not be safely rewritten for preview. This usually happens when the "
-                    "template contains complex PowerPoint objects."
+                    "could not be safely rewritten for preview."
                 )
                 st.session_state["current_preview_slide"] = 1
             else:
