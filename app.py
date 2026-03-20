@@ -5,6 +5,7 @@ import tempfile
 import subprocess
 from io import BytesIO
 from shutil import which
+from copy import deepcopy
 
 import fitz  # PyMuPDF
 import gspread
@@ -27,6 +28,7 @@ WORKSHEET_NAME = st.secrets["WORKSHEET_NAME"]
 
 FIRST_LAYOUT_NAME = "TEMPLATE_FIRST"
 REST_LAYOUT_NAME = "TEMPLATE_REST"
+DIVIDER_LAYOUT_NAME = "SECTION_DIVIDER"
 
 
 # =========================================================
@@ -65,12 +67,8 @@ def get_all_records_cached():
 # SESSION STATE
 # =========================================================
 DEFAULTS = {
-    "setlist": [],
     "loaded_song": None,
-    "editing_setlist_index": None,
-    "pending_setlist_load": None,
     "reset_editor_pending": False,
-    "setlist_selected_index": 0,
     "uploaded_templates": {},
     "selected_template_name": None,
     "editor_umh": "",
@@ -86,16 +84,21 @@ DEFAULTS = {
     "editor_ace_key": 0,
     "last_editor_text": "",
     "last_current_song_signature": None,
-    "last_detected_edit_line": None,
     "editor_status_message": "",
     "current_preview_slide": 1,
     "preview_mode": "song",
     "current_song_preview_images": None,
     "service_preview_images": None,
-    "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
     "preserve_template_slides": True,
+    "service_sections": [],
+    "divider_layout_names": [DIVIDER_LAYOUT_NAME],
+    "selected_section_id": None,
+    "editing_song_location": None,   # {"section_id": "...", "song_index": 0}
+    "editor_target_section_id": None,
+    "service_song_start_slides": [],
+    "template_signature_for_sections": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -104,7 +107,7 @@ for key, value in DEFAULTS.items():
 
 
 # =========================================================
-# HELPERS
+# BASIC HELPERS
 # =========================================================
 def soffice_available() -> bool:
     if SOFFICE_PATH == "soffice":
@@ -241,6 +244,68 @@ def delete_all_slides(prs):
         del prs.slides._sldIdLst[0]
 
 
+def get_slide_layout_name(slide):
+    try:
+        return slide.slide_layout.name.strip()
+    except Exception:
+        return ""
+
+
+def extract_slide_text(slide):
+    parts = []
+    for shape in slide.shapes:
+        if hasattr(shape, "text"):
+            text = shape.text.strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+# =========================================================
+# TEMPLATE / SECTION HELPERS
+# =========================================================
+def is_divider_slide(slide):
+    layout_name = get_slide_layout_name(slide).strip()
+    divider_layout_names = st.session_state.get("divider_layout_names", [])
+    return layout_name in divider_layout_names
+
+
+def get_divider_title(slide, fallback="Untitled Section"):
+    if slide.shapes.title and slide.shapes.title.text.strip():
+        return slide.shapes.title.text.strip()
+
+    text = extract_slide_text(slide)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[0] if lines else fallback
+
+
+def template_has_layout(prs, layout_name: str) -> bool:
+    for slide_master in prs.slide_masters:
+        for slide_layout in slide_master.slide_layouts:
+            if slide_layout.name.strip() == layout_name:
+                return True
+    return False
+
+
+def count_divider_slides(prs) -> int:
+    divider_names = set(st.session_state.get("divider_layout_names", []))
+    count = 0
+    for slide in prs.slides:
+        if get_slide_layout_name(slide).strip() in divider_names:
+            count += 1
+    return count
+
+
+def find_divider_slides_missing_titles(prs):
+    bad_indices = []
+    for i, slide in enumerate(prs.slides, start=1):
+        if is_divider_slide(slide):
+            title = slide.shapes.title.text.strip() if slide.shapes.title and slide.shapes.title else ""
+            if not title:
+                bad_indices.append(i)
+    return bad_indices
+
+
 def validate_template_bytes(template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
@@ -255,9 +320,23 @@ def validate_template_bytes(template_bytes: bytes):
     if rest_layout is None:
         errors.append(f"Missing layout: {REST_LAYOUT_NAME}")
 
+    if not template_has_layout(prs, DIVIDER_LAYOUT_NAME):
+        errors.append(
+            f"Missing divider layout: {DIVIDER_LAYOUT_NAME}. "
+            f"Create it in Slide Master and use it for all service divider slides."
+        )
+
+    divider_slide_count = count_divider_slides(prs)
+    if divider_slide_count == 0:
+        errors.append(
+            f"No divider slides found using layout {DIVIDER_LAYOUT_NAME}. "
+            f"Add at least one divider slide based on that layout."
+        )
+
     if errors:
         return False, errors, warnings
 
+    # validate the song-generation layouts by creating temp slides
     first_slide = prs.slides.add_slide(first_layout)
     rest_slide = prs.slides.add_slide(rest_layout)
 
@@ -272,9 +351,54 @@ def validate_template_bytes(template_bytes: bytes):
     if rest_body_placeholder is None:
         errors.append(f"{REST_LAYOUT_NAME} is missing a body/lyrics placeholder")
 
+    missing_title_slides = find_divider_slides_missing_titles(prs)
+    if missing_title_slides:
+        warnings.append(
+            "Divider slides missing title text at slide(s): "
+            + ", ".join(map(str, missing_title_slides))
+        )
+
     return len(errors) == 0, errors, warnings
 
 
+def parse_template_sections(template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    sections = []
+    current_section = None
+    section_counter = 0
+
+    divider_count = count_divider_slides(prs)
+    if divider_count == 0:
+        raise ValueError(
+            f"Template has no {DIVIDER_LAYOUT_NAME} slides. "
+            f"Please add divider slides using the {DIVIDER_LAYOUT_NAME} layout."
+        )
+
+    for i, slide in enumerate(prs.slides):
+        if is_divider_slide(slide):
+            current_section = {
+                "id": f"sec_{section_counter}",
+                "title": get_divider_title(slide, fallback=f"Section {section_counter + 1}"),
+                "divider_index": i,
+                "template_slide_indices": [],
+                "include_divider": True,
+                "include_template_content": True,
+                "songs": [],
+            }
+            sections.append(current_section)
+            section_counter += 1
+        else:
+            if current_section is None:
+                continue
+            current_section["template_slide_indices"].append(i)
+
+    return sections
+
+
+# =========================================================
+# SONG / SECTION STATE HELPERS
+# =========================================================
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state["editor_umh"].strip(),
@@ -292,6 +416,7 @@ def build_editor_song_item(current_slides):
         ),
         "override_lyrics_font_size": st.session_state["editor_override_lyrics_font_size"],
         "override_line_spacing": st.session_state["editor_override_line_spacing"],
+        "target_section_id": st.session_state.get("editor_target_section_id"),
     }
 
 
@@ -308,78 +433,109 @@ def build_current_song_signature(song_item, selected_template_name):
     )
 
 
-def create_combined_ppt(setlist, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
-
-    if not st.session_state.get("preserve_template_slides", True):
-        delete_all_slides(prs)
-
-    for song in setlist:
-        umh_number = str(song["umh_number"]).strip()
-        title = str(song["title"]).strip()
-        slides = song["slides"]
-
-        lyrics_font_size_pt = song.get("lyrics_font_size_pt")
-        line_spacing = song.get("line_spacing")
-
-        full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
-
-        for i, slide_lines in enumerate(slides):
-            lyrics_text = "\n".join(slide_lines)
-
-            if i == 0:
-                slide = prs.slides.add_slide(first_layout)
-                set_shape_text(
-                    slide.shapes.title,
-                    full_title,
-                    font_size_pt=None,
-                    line_spacing=None,
-                )
-                set_shape_text(
-                    get_body_placeholder(slide),
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-            else:
-                slide = prs.slides.add_slide(rest_layout)
-                set_shape_text(
-                    get_body_placeholder(slide),
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-
-    output = BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output
+def get_section_by_id(section_id):
+    for sec in st.session_state.get("service_sections", []):
+        if sec["id"] == section_id:
+            return sec
+    return None
 
 
-def create_single_song_ppt(song_item, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
+def get_section_index_by_id(section_id):
+    sections = st.session_state.get("service_sections", [])
+    for i, sec in enumerate(sections):
+        if sec["id"] == section_id:
+            return i
+    return None
 
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
 
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
+def clear_service_outputs():
+    st.session_state["ppt_data"] = None
+    st.session_state["service_preview_images"] = None
+    st.session_state["service_song_start_slides"] = []
 
-    # ✅ ALWAYS clear for song preview
-    delete_all_slides(prs)
 
-    umh_number = str(song_item["umh_number"]).strip()
-    title = str(song_item["title"]).strip()
-    slides = song_item["slides"]
+def reset_editor():
+    st.session_state["loaded_song"] = None
+    st.session_state["editor_umh"] = ""
+    st.session_state["editor_title"] = ""
+    st.session_state["editor_text"] = ""
+    st.session_state["editor_override_lyrics_font_size"] = False
+    st.session_state["editor_override_line_spacing"] = False
+    st.session_state["editor_lyrics_font_size_pt"] = 32
+    st.session_state["editor_line_spacing"] = 1.2
+    st.session_state["current_song_preview_images"] = None
+    st.session_state["last_editor_text"] = ""
+    st.session_state["last_current_song_signature"] = None
+    st.session_state["editor_status_message"] = ""
+    st.session_state["current_preview_slide"] = 1
+    st.session_state["editor_ace_key"] += 1
+    st.session_state["editing_song_location"] = None
+    st.session_state["editor_target_section_id"] = st.session_state.get("selected_section_id")
 
-    lyrics_font_size_pt = song_item.get("lyrics_font_size_pt")
-    line_spacing = song_item.get("line_spacing")
+
+def selected_template_info():
+    template_name = st.session_state.get("selected_template_name")
+    if not template_name:
+        return None, False, [], []
+
+    uploaded = st.session_state["uploaded_templates"]
+    if template_name not in uploaded:
+        return None, False, [], []
+
+    template_bytes = uploaded[template_name]
+    ok, errors, warnings = validate_template_bytes(template_bytes)
+    return template_bytes, ok, errors, warnings
+
+
+def sync_sections_from_template(template_bytes: bytes):
+    template_sig = (
+        st.session_state.get("selected_template_name"),
+        len(template_bytes),
+    )
+
+    existing_sections = st.session_state.get("service_sections", [])
+    existing_song_map = {
+        sec["title"]: sec.get("songs", [])
+        for sec in existing_sections
+    }
+    existing_include_content_map = {
+        sec["title"]: sec.get("include_template_content", True)
+        for sec in existing_sections
+    }
+    existing_include_divider_map = {
+        sec["title"]: sec.get("include_divider", True)
+        for sec in existing_sections
+    }
+
+    parsed_sections = parse_template_sections(template_bytes)
+
+    for sec in parsed_sections:
+        sec["songs"] = existing_song_map.get(sec["title"], [])
+        sec["include_template_content"] = existing_include_content_map.get(sec["title"], True)
+        sec["include_divider"] = existing_include_divider_map.get(sec["title"], True)
+
+    st.session_state["service_sections"] = parsed_sections
+    st.session_state["template_signature_for_sections"] = template_sig
+
+    if parsed_sections:
+        valid_ids = {sec["id"] for sec in parsed_sections}
+        if st.session_state.get("selected_section_id") not in valid_ids:
+            st.session_state["selected_section_id"] = parsed_sections[0]["id"]
+
+        if st.session_state.get("editor_target_section_id") not in valid_ids:
+            st.session_state["editor_target_section_id"] = st.session_state["selected_section_id"]
+
+
+# =========================================================
+# PPT BUILD HELPERS
+# =========================================================
+def add_song_to_presentation(prs, song, first_layout, rest_layout):
+    umh_number = str(song["umh_number"]).strip()
+    title = str(song["title"]).strip()
+    slides = song["slides"]
+
+    lyrics_font_size_pt = song.get("lyrics_font_size_pt")
+    line_spacing = song.get("line_spacing")
 
     full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
 
@@ -404,13 +560,116 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
                 line_spacing=line_spacing,
             )
 
+
+def copy_slide_approx(source_prs, dest_prs, slide_index):
+    source_slide = source_prs.slides[slide_index]
+    blank_layout = dest_prs.slide_layouts[0]
+    new_slide = dest_prs.slides.add_slide(blank_layout)
+
+    for shape in list(new_slide.shapes):
+        sp = shape._element
+        sp.getparent().remove(sp)
+
+    for shape in source_slide.shapes:
+        new_el = deepcopy(shape._element)
+        new_slide.shapes._spTree.insert_element_before(new_el, "p:extLst")
+
+    return new_slide
+
+
+def create_single_song_ppt(song_item, template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    delete_all_slides(prs)
+    add_song_to_presentation(prs, song_item, first_layout, rest_layout)
+
     output = BytesIO()
     prs.save(output)
     output.seek(0)
     return output
-    
 
 
+def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
+    original_prs = open_presentation_from_bytes(template_bytes)
+    first_layout = get_layout_by_name(original_prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(original_prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    rebuilt = open_presentation_from_bytes(template_bytes)
+    delete_all_slides(rebuilt)
+
+    if not st.session_state.get("preserve_template_slides", True):
+        for sec in service_sections:
+            for song in sec.get("songs", []):
+                add_song_to_presentation(rebuilt, song, first_layout, rest_layout)
+
+        output = BytesIO()
+        rebuilt.save(output)
+        output.seek(0)
+        return output
+
+    for sec in service_sections:
+        if sec.get("include_divider", True) and sec.get("divider_index") is not None:
+            copy_slide_approx(original_prs, rebuilt, sec["divider_index"])
+
+        if sec.get("include_template_content", True):
+            for slide_idx in sec.get("template_slide_indices", []):
+                copy_slide_approx(original_prs, rebuilt, slide_idx)
+
+        for song in sec.get("songs", []):
+            add_song_to_presentation(rebuilt, song, first_layout, rest_layout)
+
+    output = BytesIO()
+    rebuilt.save(output)
+    output.seek(0)
+    return output
+
+
+def get_service_song_start_slides_from_sections(sections):
+    starts = []
+    slide_counter = 1
+
+    for sec in sections:
+        if sec.get("include_divider", True) and sec.get("divider_index") is not None:
+            slide_counter += 1
+
+        if sec.get("include_template_content", True):
+            slide_counter += len(sec.get("template_slide_indices", []))
+
+        for song in sec.get("songs", []):
+            starts.append({
+                "section_id": sec["id"],
+                "title": song["title"],
+                "start_slide": slide_counter,
+            })
+            slide_counter += len(song["slides"])
+
+    return starts
+
+
+def refresh_service_preview(service_sections, template_bytes):
+    ppt_data = create_combined_ppt_from_sections(service_sections, template_bytes)
+    preview_images = pptx_to_preview_images(ppt_data)
+
+    if not preview_images:
+        raise RuntimeError("No preview images generated from service PPT")
+
+    st.session_state["ppt_data"] = ppt_data
+    st.session_state["service_preview_images"] = preview_images
+    st.session_state["service_song_start_slides"] = get_service_song_start_slides_from_sections(service_sections)
+
+
+# =========================================================
+# PREVIEW HELPERS
+# =========================================================
 def pptx_to_preview_images(pptx_bytes: BytesIO):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
@@ -467,7 +726,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
         st.info("Preview will appear here.")
         return
 
-    container_id = f"preview-scroll-container-{len(images)}"
+    container_id = f"preview-scroll-container-{len(images)}-{active_slide}"
     active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
@@ -486,7 +745,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " ← editing here" if active_slide == i else ""
+        badge = " ← current" if active_slide == i else ""
 
         html += f"""
         <div id="slide-{i}" style="margin-bottom: 24px;">
@@ -521,24 +780,9 @@ def render_scrollable_images(images, height=760, active_slide=None):
     st.components.v1.html(html, height=height, scrolling=False)
 
 
-def reset_editor():
-    st.session_state["loaded_song"] = None
-    st.session_state["editing_setlist_index"] = None
-    st.session_state["editor_umh"] = ""
-    st.session_state["editor_title"] = ""
-    st.session_state["editor_text"] = ""
-    st.session_state["editor_override_lyrics_font_size"] = False
-    st.session_state["editor_override_line_spacing"] = False
-    st.session_state["editor_lyrics_font_size_pt"] = 32
-    st.session_state["editor_line_spacing"] = 1.2
-    st.session_state["current_song_preview_images"] = None
-    st.session_state["last_editor_text"] = ""
-    st.session_state["last_current_song_signature"] = None
-    st.session_state["editor_status_message"] = ""
-    st.session_state["current_preview_slide"] = 1
-    st.session_state["editor_ace_key"] += 1
-
-
+# =========================================================
+# EDITOR / AUTO PREVIEW HELPERS
+# =========================================================
 def refresh_current_song_preview(song_item, template_bytes):
     ppt_data = create_single_song_ppt(song_item, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
@@ -559,7 +803,7 @@ def load_song_into_editor(match):
         "lyrics_raw": lyrics_raw,
     }
 
-    st.session_state["editing_setlist_index"] = None
+    st.session_state["editing_song_location"] = None
     st.session_state["editor_umh"] = str(match.get("UMH Number", "")).strip()
     st.session_state["editor_title"] = str(match.get("Title", "")).strip()
     st.session_state["editor_text"] = lyrics_raw
@@ -568,6 +812,7 @@ def load_song_into_editor(match):
     st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+    st.session_state["editor_target_section_id"] = st.session_state.get("selected_section_id")
 
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = lyrics_raw
@@ -593,8 +838,6 @@ def load_song_into_editor(match):
                 if current_slides:
                     song_item = build_editor_song_item(current_slides)
                     refresh_current_song_preview(song_item, template_bytes)
-                    st.session_state["current_preview_slide"] = 1
-                    st.session_state["preview_mode"] = "song"
                     st.session_state["editor_status_message"] = "Song preview loaded."
                 else:
                     st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
@@ -609,16 +852,12 @@ def load_song_into_editor(match):
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 
-def apply_pending_setlist_load():
-    idx = st.session_state.get("pending_setlist_load")
-    if idx is None:
+def load_section_song_into_editor(section_id, song_index):
+    sec = get_section_by_id(section_id)
+    if not sec or not (0 <= song_index < len(sec["songs"])):
         return
 
-    if idx >= len(st.session_state["setlist"]):
-        st.session_state["pending_setlist_load"] = None
-        return
-
-    item = st.session_state["setlist"][idx]
+    item = sec["songs"][song_index]
     lyrics_text = "\n\n".join("\n".join(slide) for slide in item["slides"])
 
     st.session_state["loaded_song"] = {
@@ -627,63 +866,27 @@ def apply_pending_setlist_load():
         "lyrics_raw": lyrics_text,
     }
 
-    st.session_state["editing_setlist_index"] = idx
+    st.session_state["editing_song_location"] = {
+        "section_id": section_id,
+        "song_index": song_index,
+    }
+
     st.session_state["editor_umh"] = item["umh_number"]
     st.session_state["editor_title"] = item["title"]
     st.session_state["editor_text"] = lyrics_text
-
-    st.session_state["editor_override_lyrics_font_size"] = item.get(
-        "override_lyrics_font_size", False
-    )
-    st.session_state["editor_override_line_spacing"] = item.get(
-        "override_line_spacing", False
-    )
-    st.session_state["editor_lyrics_font_size_pt"] = (
-        item.get("lyrics_font_size_pt", 32) or 32
-    )
-    st.session_state["editor_line_spacing"] = (
-        item.get("line_spacing", 1.2) or 1.2
-    )
+    st.session_state["editor_override_lyrics_font_size"] = item.get("override_lyrics_font_size", False)
+    st.session_state["editor_override_line_spacing"] = item.get("override_line_spacing", False)
+    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32) or 32
+    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2) or 1.2
+    st.session_state["editor_target_section_id"] = section_id
 
     st.session_state["current_song_preview_images"] = None
-    st.session_state["pending_setlist_load"] = None
     st.session_state["last_editor_text"] = lyrics_text
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
     st.session_state["current_preview_slide"] = 1
     st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
-
-    if (
-        st.session_state.get("selected_template_name")
-        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
-        and soffice_available()
-    ):
-        try:
-            template_bytes = st.session_state["uploaded_templates"][
-                st.session_state["selected_template_name"]
-            ]
-            template_ok, _, _ = validate_template_bytes(template_bytes)
-
-            if template_ok:
-                current_slides = get_current_slides(st.session_state["editor_text"])
-                if current_slides:
-                    song_item = build_editor_song_item(current_slides)
-                    refresh_current_song_preview(song_item, template_bytes)
-                    st.session_state["current_preview_slide"] = 1
-                    st.session_state["preview_mode"] = "song"
-                    st.session_state["editor_status_message"] = "Song preview loaded."
-                else:
-                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
-            else:
-                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
-        except Exception as e:
-            st.session_state["editor_status_message"] = f"Preview load failed: {e}"
-    else:
-        if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. ⚠️ Please select a template to generate preview."
-        elif not soffice_available():
-            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 
 def blank_separator_added(old_text: str, new_text: str) -> bool:
@@ -789,123 +992,37 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
     return None
 
 
-def get_service_song_start_slides(setlist):
-    starts = []
-    slide_counter = 1
-    for song in setlist:
-        starts.append(slide_counter)
-        slide_counter += len(song["slides"])
-    return starts
-
-
-def refresh_service_preview(setlist, template_bytes):
-    ppt_data = create_combined_ppt(setlist, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
-
-    if not preview_images:
-        raise RuntimeError("No preview images generated from service PPT")
-
-    st.session_state["ppt_data"] = ppt_data
-    st.session_state["service_preview_images"] = preview_images
-    st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
-
-
-def clear_service_outputs():
-    st.session_state["ppt_data"] = None
-    st.session_state["service_preview_images"] = None
-    st.session_state["service_song_start_slides"] = []
-
-
-def selected_template_info():
-    template_name = st.session_state.get("selected_template_name")
-    if not template_name:
-        return None, False, [], []
-
-    uploaded = st.session_state["uploaded_templates"]
-    if template_name not in uploaded:
-        return None, False, [], []
-
-    template_bytes = uploaded[template_name]
-    ok, errors, warnings = validate_template_bytes(template_bytes)
-    return template_bytes, ok, errors, warnings
-
-
 # =========================================================
 # PRE-RUN ACTIONS
 # =========================================================
-apply_pending_setlist_load()
-
 if st.session_state.get("reset_editor_pending"):
     reset_editor()
     st.session_state["reset_editor_pending"] = False
 
 selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
 
+if selected_template_bytes and selected_template_ok:
+    try:
+        template_sig = (
+            st.session_state.get("selected_template_name"),
+            len(selected_template_bytes),
+        )
+        if st.session_state.get("template_signature_for_sections") != template_sig:
+            sync_sections_from_template(selected_template_bytes)
+    except Exception:
+        st.session_state["service_sections"] = []
+else:
+    st.session_state["service_sections"] = []
+    st.session_state["selected_section_id"] = None
+
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.markdown("### Setlist Order")
-
-    setlist = st.session_state["setlist"]
-
-    if not setlist:
-        st.caption("No songs added yet.")
-    else:
-        selected_index = st.session_state.get("setlist_selected_index", 0)
-        editing_index = st.session_state.get("editing_setlist_index")
-
-        selected_index = max(0, min(selected_index, len(setlist) - 1))
-        st.session_state["setlist_selected_index"] = selected_index
-
-        for i, song in enumerate(setlist):
-            is_selected = i == selected_index
-            is_editing = i == editing_index
-
-            if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
-            else:
-                label = f'{i+1}. {song["title"]}'
-
-            prefix = ""
-            if is_selected:
-                prefix += "🔹 "
-            if is_editing:
-                prefix += "✏️ "
-
-            if prefix:
-                st.markdown(f"**{prefix}{label}**")
-            else:
-                st.markdown(label)
-
-    st.divider()
-
-    st.markdown("### Loaded in Editor")
-
-    loaded_umh = st.session_state.get("editor_umh", "").strip()
-    loaded_title = st.session_state.get("editor_title", "").strip()
-    loaded_idx = st.session_state.get("editing_setlist_index")
-
-    if loaded_title:
-        if loaded_idx is not None:
-            if loaded_umh:
-                st.info(f"Editing setlist item #{loaded_idx + 1}\n\nUMH {loaded_umh} {loaded_title}")
-            else:
-                st.info(f"Editing setlist item #{loaded_idx + 1}\n\n{loaded_title}")
-        else:
-            if loaded_umh:
-                st.info(f"New / repository song\n\nUMH {loaded_umh} {loaded_title}")
-            else:
-                st.info(f"New / repository song\n\n{loaded_title}")
-    else:
-        st.caption("No song loaded in editor.")
-
-    st.divider()
-
     st.header("Controls")
 
-    with st.expander("1. Template", expanded=False):
+    with st.expander("1. Template", expanded=True):
         uploaded_templates = st.file_uploader(
             "Upload template(s)",
             type=["pptx"],
@@ -924,11 +1041,19 @@ with st.sidebar:
             if st.session_state["selected_template_name"] in template_names:
                 default_index = template_names.index(st.session_state["selected_template_name"])
 
-            st.session_state["selected_template_name"] = st.selectbox(
+            selected_name = st.selectbox(
                 "Select template",
                 template_names,
                 index=default_index,
             )
+            if selected_name != st.session_state["selected_template_name"]:
+                st.session_state["selected_template_name"] = selected_name
+                clear_service_outputs()
+                st.session_state["current_song_preview_images"] = None
+                st.session_state["last_current_song_signature"] = None
+                st.rerun()
+            else:
+                st.session_state["selected_template_name"] = selected_name
 
             selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
 
@@ -938,6 +1063,13 @@ with st.sidebar:
                 st.error("Template invalid")
                 for err in selected_template_errors:
                     st.write(f"- {err}")
+                st.info(
+                    "Required template structure:\n"
+                    f"- layout: {FIRST_LAYOUT_NAME}\n"
+                    f"- layout: {REST_LAYOUT_NAME}\n"
+                    f"- layout: {DIVIDER_LAYOUT_NAME}\n"
+                    f"- at least 1 slide using {DIVIDER_LAYOUT_NAME}"
+                )
 
             if selected_template_warnings:
                 for warn in selected_template_warnings:
@@ -946,12 +1078,20 @@ with st.sidebar:
             if st.button("Remove selected template", use_container_width=True):
                 del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
                 st.session_state["selected_template_name"] = None
+                st.session_state["service_sections"] = []
+                clear_service_outputs()
                 st.rerun()
+
             st.divider()
-            st.checkbox(
-                "Keep existing slides in template",
-                key="preserve_template_slides",
-            )
+            st.checkbox("Keep existing slides in template", key="preserve_template_slides")
+
+            if selected_template_ok and st.session_state.get("service_sections"):
+                st.markdown("#### Detected Service Sections")
+                for sec in st.session_state["service_sections"]:
+                    st.caption(
+                        f'- {sec["title"]} '
+                        f'({len(sec["template_slide_indices"])} content slide(s))'
+                    )
         else:
             st.info("Upload at least one template.")
 
@@ -995,154 +1135,123 @@ with st.sidebar:
             elif keyword.strip():
                 st.info("No matching titles found.")
 
-    with st.expander("3. Setlist", expanded=True):
-        setlist = st.session_state["setlist"]
+    with st.expander("3. Service Sections", expanded=True):
+        sections = st.session_state.get("service_sections", [])
 
-        if not setlist:
-            st.info("No songs added yet.")
+        if not sections:
+            st.caption("No sections detected yet.")
         else:
-            labels = []
-            for i, song in enumerate(setlist):
-                if song["umh_number"]:
-                    labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})')
+            selected_section_id = st.session_state.get("selected_section_id")
+            if selected_section_id is None and sections:
+                st.session_state["selected_section_id"] = sections[0]["id"]
+                selected_section_id = sections[0]["id"]
+
+            for sec in sections:
+                is_selected = sec["id"] == selected_section_id
+                prefix = "🔹 " if is_selected else ""
+
+                uploaded_count = len(sec.get("template_slide_indices", []))
+                keep_text = "shown" if sec.get("include_template_content", True) else "hidden"
+
+                st.markdown(f"**{prefix}{sec['title']}**")
+                st.caption(f"Uploaded content: {uploaded_count} slide(s) · {keep_text}")
+
+                row1, row2, row3 = st.columns(3)
+
+                with row1:
+                    if st.button("Select", key=f"select_sec_{sec['id']}", use_container_width=True):
+                        st.session_state["selected_section_id"] = sec["id"]
+                        st.session_state["editor_target_section_id"] = sec["id"]
+                        if st.session_state["preview_mode"] == "service":
+                            st.rerun()
+
+                with row2:
+                    toggle_label = "Hide content" if sec.get("include_template_content", True) else "Show content"
+                    if st.button(toggle_label, key=f"toggle_content_{sec['id']}", use_container_width=True):
+                        sec["include_template_content"] = not sec.get("include_template_content", True)
+                        clear_service_outputs()
+                        st.rerun()
+
+                with row3:
+                    toggle_divider_label = "Hide divider" if sec.get("include_divider", True) else "Show divider"
+                    if st.button(toggle_divider_label, key=f"toggle_divider_{sec['id']}", use_container_width=True):
+                        sec["include_divider"] = not sec.get("include_divider", True)
+                        clear_service_outputs()
+                        st.rerun()
+
+                if sec.get("songs"):
+                    for i, song in enumerate(sec["songs"]):
+                        label = (
+                            f'• UMH {song["umh_number"]} {song["title"]}'
+                            if song["umh_number"] else f'• {song["title"]}'
+                        )
+                        st.write(label)
+
+                        c1, c2, c3, c4 = st.columns(4)
+                        with c1:
+                            if st.button("Edit", key=f"edit_{sec['id']}_{i}", use_container_width=True):
+                                load_section_song_into_editor(sec["id"], i)
+                                st.rerun()
+
+                        with c2:
+                            if st.button("Up", key=f"up_{sec['id']}_{i}", use_container_width=True) and i > 0:
+                                sec["songs"][i - 1], sec["songs"][i] = sec["songs"][i], sec["songs"][i - 1]
+                                clear_service_outputs()
+                                st.rerun()
+
+                        with c3:
+                            if st.button("Down", key=f"down_{sec['id']}_{i}", use_container_width=True) and i < len(sec["songs"]) - 1:
+                                sec["songs"][i + 1], sec["songs"][i] = sec["songs"][i], sec["songs"][i + 1]
+                                clear_service_outputs()
+                                st.rerun()
+
+                        with c4:
+                            if st.button("Del", key=f"del_{sec['id']}_{i}", use_container_width=True):
+                                sec["songs"].pop(i)
+                                clear_service_outputs()
+                                edit_loc = st.session_state.get("editing_song_location")
+                                if (
+                                    edit_loc is not None
+                                    and edit_loc["section_id"] == sec["id"]
+                                    and edit_loc["song_index"] == i
+                                ):
+                                    st.session_state["reset_editor_pending"] = True
+                                st.rerun()
                 else:
-                    labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
+                    st.caption("No songs in this section.")
 
-            st.session_state["setlist_selected_index"] = min(
-                st.session_state.get("setlist_selected_index", 0),
-                len(labels) - 1,
-            )
+                st.divider()
 
-            if "pending_setlist_selectbox_index" in st.session_state:
-                pending_index = st.session_state.pop("pending_setlist_selectbox_index")
-                pending_index = max(0, min(pending_index, len(labels) - 1))
-                st.session_state["setlist_selectbox_sidebar"] = pending_index
-                st.session_state["setlist_selected_index"] = pending_index
-
-            if (
-                "setlist_selectbox_sidebar" not in st.session_state
-                or st.session_state["setlist_selectbox_sidebar"] >= len(labels)
-            ):
-                st.session_state["setlist_selectbox_sidebar"] = st.session_state["setlist_selected_index"]
-
-            previous_selected_index = st.session_state["setlist_selected_index"]
-
-            selected_index = st.selectbox(
-                "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                key="setlist_selectbox_sidebar",
-            )
-
-            st.session_state["setlist_selected_index"] = selected_index
-
-            if (
-                selected_index != previous_selected_index
-                and st.session_state.get("preview_mode") == "service"
-            ):
-                starts = st.session_state.get("service_song_start_slides", [])
-                st.session_state["current_preview_slide"] = (
-                    starts[selected_index] if selected_index < len(starts) else 1
-                )
-                st.rerun()
-
-            action_cols = st.columns(4)
-
-            with action_cols[0]:
-                if st.button("✏️", use_container_width=True, help="Edit selected song"):
-                    st.session_state["pending_setlist_load"] = selected_index
-                    st.session_state["preview_mode"] = "song"
-                    st.session_state["current_song_preview_images"] = None
-                    st.session_state["last_current_song_signature"] = None
-                    st.rerun()
-
-            with action_cols[1]:
-                if st.button("⬆️", use_container_width=True, help="Move selected song up") and selected_index > 0:
-                    setlist[selected_index - 1], setlist[selected_index] = (
-                        setlist[selected_index],
-                        setlist[selected_index - 1],
-                    )
-
-                    new_index = selected_index - 1
-                    st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["pending_setlist_selectbox_index"] = new_index
-
-                    editing_index = st.session_state.get("editing_setlist_index")
-                    if editing_index == selected_index:
-                        st.session_state["editing_setlist_index"] = new_index
-                    elif editing_index == new_index:
-                        st.session_state["editing_setlist_index"] = selected_index
-
-                    pending = st.session_state.get("pending_setlist_load")
-                    if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = new_index
-                    elif pending == new_index:
-                        st.session_state["pending_setlist_load"] = selected_index
-
-                    clear_service_outputs()
-                    st.rerun()
-
-            with action_cols[2]:
-                if st.button("⬇️", use_container_width=True, help="Move selected song down") and selected_index < len(setlist) - 1:
-                    setlist[selected_index + 1], setlist[selected_index] = (
-                        setlist[selected_index],
-                        setlist[selected_index + 1],
-                    )
-
-                    new_index = selected_index + 1
-                    st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["pending_setlist_selectbox_index"] = new_index
-
-                    editing_index = st.session_state.get("editing_setlist_index")
-                    if editing_index == selected_index:
-                        st.session_state["editing_setlist_index"] = new_index
-                    elif editing_index == new_index:
-                        st.session_state["editing_setlist_index"] = selected_index
-
-                    pending = st.session_state.get("pending_setlist_load")
-                    if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = new_index
-                    elif pending == new_index:
-                        st.session_state["pending_setlist_load"] = selected_index
-
-                    clear_service_outputs()
-                    st.rerun()
-
-            with action_cols[3]:
-                if st.button("🗑️", use_container_width=True, help="Delete selected song"):
-                    setlist.pop(selected_index)
-
-                    new_index = min(selected_index, len(setlist) - 1) if setlist else 0
-                    st.session_state["setlist_selected_index"] = new_index
-                    st.session_state["pending_setlist_selectbox_index"] = new_index
-
-                    if st.session_state.get("editing_setlist_index") == selected_index:
-                        st.session_state["reset_editor_pending"] = True
-                    elif (
-                        st.session_state.get("editing_setlist_index") is not None
-                        and st.session_state["editing_setlist_index"] > selected_index
-                    ):
-                        st.session_state["editing_setlist_index"] -= 1
-
-                    pending = st.session_state.get("pending_setlist_load")
-                    if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = None
-                    elif pending is not None and pending > selected_index:
-                        st.session_state["pending_setlist_load"] = pending - 1
-
-                    clear_service_outputs()
-                    st.rerun()
-
-            if st.button("Clear Setlist", use_container_width=True, type="secondary"):
-                st.session_state["setlist"] = []
-                st.session_state["editing_setlist_index"] = None
-                st.session_state["pending_setlist_load"] = None
-                st.session_state["setlist_selected_index"] = 0
-                st.session_state["pending_setlist_selectbox_index"] = 0
-                st.session_state["preview_mode"] = "song"
-                st.session_state["current_song_preview_images"] = None
+            if st.button("Clear All Section Songs", use_container_width=True, type="secondary"):
+                for sec in sections:
+                    sec["songs"] = []
                 clear_service_outputs()
                 st.rerun()
+
+    st.divider()
+    st.markdown("### Loaded in Editor")
+
+    loaded_umh = st.session_state.get("editor_umh", "").strip()
+    loaded_title = st.session_state.get("editor_title", "").strip()
+    editing_loc = st.session_state.get("editing_song_location")
+    target_sec = get_section_by_id(st.session_state.get("editor_target_section_id"))
+
+    if loaded_title:
+        if editing_loc is not None:
+            sec = get_section_by_id(editing_loc["section_id"])
+            sec_name = sec["title"] if sec else "Unknown section"
+            if loaded_umh:
+                st.info(f'Editing "{sec_name}"\n\nUMH {loaded_umh} {loaded_title}')
+            else:
+                st.info(f'Editing "{sec_name}"\n\n{loaded_title}')
+        else:
+            target_name = target_sec["title"] if target_sec else "No section selected"
+            if loaded_umh:
+                st.info(f'New / repository song\n\nUMH {loaded_umh} {loaded_title}\n\nTarget: {target_name}')
+            else:
+                st.info(f'New / repository song\n\n{loaded_title}\n\nTarget: {target_name}')
+    else:
+        st.caption("No song loaded in editor.")
 
 
 # =========================================================
@@ -1153,15 +1262,36 @@ main_left, main_right = st.columns([1.15, 1], vertical_alignment="top")
 with main_left:
     st.subheader("Song Editor")
 
-    edit_idx = st.session_state.get("editing_setlist_index")
-    if edit_idx is not None:
-        st.info(f"Editing setlist item #{edit_idx + 1}")
+    edit_loc = st.session_state.get("editing_song_location")
+    if edit_loc is not None:
+        sec = get_section_by_id(edit_loc["section_id"])
+        sec_name = sec["title"] if sec else "Unknown section"
+        st.info(f"Editing song in section: {sec_name}")
 
     meta_col1, meta_col2 = st.columns([1, 3])
     with meta_col1:
         st.text_input("UMH", key="editor_umh")
     with meta_col2:
         st.text_input("Title", key="editor_title")
+
+    sections = st.session_state.get("service_sections", [])
+    if sections:
+        section_ids = [sec["id"] for sec in sections]
+        section_name_map = {sec["id"]: sec["title"] for sec in sections}
+
+        current_target = st.session_state.get("editor_target_section_id")
+        if current_target not in section_ids:
+            current_target = section_ids[0]
+            st.session_state["editor_target_section_id"] = current_target
+
+        st.selectbox(
+            "Add / move song to section",
+            options=section_ids,
+            format_func=lambda sid: section_name_map[sid],
+            key="editor_target_section_id",
+        )
+    else:
+        st.caption("No service sections detected from template.")
 
     st.markdown("#### Slide Splitting")
     split_col1, split_col2 = st.columns([3, 1])
@@ -1343,14 +1473,16 @@ with main_left:
             st.caption("Using template line spacing")
 
     st.markdown("#### Add / Update")
-    allow_duplicates = st.checkbox("Allow duplicate songs in setlist", value=False)
-
     action_col1, action_col2 = st.columns(2)
+
+    edit_location = st.session_state.get("editing_song_location")
+
     with action_col1:
         add_or_update = st.button(
-            "Update Song" if edit_idx is not None else "Add to Setlist",
+            "Update Song" if edit_location is not None else "Add to Section",
             use_container_width=True,
         )
+
     with action_col2:
         clear_editor = st.button("Clear Editor", use_container_width=True)
 
@@ -1359,51 +1491,51 @@ with main_left:
             st.error("No slides to add.")
         else:
             item = song_item
-            edit_idx = st.session_state.get("editing_setlist_index")
+            target_section_id = item.get("target_section_id")
+            target_sec = get_section_by_id(target_section_id)
 
-            if edit_idx is None:
-                duplicate_index = next(
-                    (
-                        i for i, s in enumerate(st.session_state["setlist"])
-                        if s["umh_number"] == item["umh_number"]
-                        and s["title"] == item["title"]
-                        and s["slides"] == item["slides"]
-                    ),
-                    None,
-                )
+            if target_sec is None:
+                st.error("Please select a valid section.")
+            else:
+                edit_location = st.session_state.get("editing_song_location")
 
-                if duplicate_index is not None and not allow_duplicates:
-                    st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
-                else:
-                    st.session_state["setlist"].append(item)
+                if edit_location is None:
+                    target_sec["songs"].append(item)
                     clear_service_outputs()
-                    st.success(
-                        f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                    )
+                    st.success(f'Added to "{target_sec["title"]}": {item["title"]}')
                     st.session_state["reset_editor_pending"] = True
                     st.rerun()
-            else:
-                st.session_state["setlist"][edit_idx] = item
-                clear_service_outputs()
+                else:
+                    old_sec = get_section_by_id(edit_location["section_id"])
+                    old_idx = edit_location["song_index"]
 
-                if (
-                    selected_template_bytes is not None
-                    and selected_template_ok
-                    and soffice_available()
-                    and current_slides
-                ):
-                    try:
-                        refresh_current_song_preview(item, selected_template_bytes)
-                        st.session_state["current_preview_slide"] = 1
-                        st.session_state["preview_mode"] = "song"
-                        st.session_state["editor_status_message"] = "Song updated and preview refreshed."
-                    except Exception as e:
-                        st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+                    if old_sec is None or not (0 <= old_idx < len(old_sec["songs"])):
+                        st.error("Original song location not found.")
+                    else:
+                        if old_sec["id"] == target_sec["id"]:
+                            old_sec["songs"][old_idx] = item
+                        else:
+                            old_sec["songs"].pop(old_idx)
+                            target_sec["songs"].append(item)
 
-                st.success(
-                    f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
-                )
-                st.rerun()
+                        st.session_state["editing_song_location"] = None
+                        clear_service_outputs()
+
+                        if (
+                            selected_template_bytes is not None
+                            and selected_template_ok
+                            and soffice_available()
+                            and current_slides
+                        ):
+                            try:
+                                refresh_current_song_preview(item, selected_template_bytes)
+                                st.session_state["preview_mode"] = "song"
+                                st.session_state["editor_status_message"] = "Song updated and preview refreshed."
+                            except Exception as e:
+                                st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+
+                        st.success(f'Updated: {item["title"]}')
+                        st.rerun()
 
     if clear_editor:
         st.session_state["reset_editor_pending"] = True
@@ -1438,11 +1570,12 @@ with main_right:
     else:
         st.caption("Full service deck preview")
 
+        sections = st.session_state.get("service_sections", [])
         can_generate = (
             selected_template_bytes is not None
             and selected_template_ok
             and soffice_available()
-            and len(st.session_state["setlist"]) > 0
+            and len(sections) > 0
         )
 
         if can_generate:
@@ -1460,21 +1593,20 @@ with main_right:
 
             if need_refresh:
                 try:
-                    refresh_service_preview(
-                        st.session_state["setlist"],
-                        selected_template_bytes,
-                    )
+                    refresh_service_preview(sections, selected_template_bytes)
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
 
+            selected_section_id = st.session_state.get("selected_section_id")
             starts = st.session_state.get("service_song_start_slides", [])
-            selected_index = st.session_state.get("setlist_selected_index", 0)
 
-            if starts and 0 <= selected_index < len(starts):
-                st.session_state["current_preview_slide"] = starts[selected_index]
-            else:
-                st.session_state["current_preview_slide"] = 1
+            # highlight first song in selected section; otherwise top of deck
+            current_slide = 1
+            found = next((x for x in starts if x["section_id"] == selected_section_id), None)
+            if found is not None:
+                current_slide = found["start_slide"]
 
+            st.session_state["current_preview_slide"] = current_slide
             preview_images = st.session_state.get("service_preview_images")
 
             if st.session_state.get("ppt_data") is not None:
@@ -1493,8 +1625,8 @@ with main_right:
                 st.info("Selected template is invalid.")
             elif not soffice_available():
                 st.info("LibreOffice/soffice is not available.")
-            elif not st.session_state["setlist"]:
-                st.info("Add songs to the setlist to view the service preview.")
+            elif not st.session_state["service_sections"]:
+                st.info("No service sections detected from template.")
 
     if preview_images:
         render_scrollable_images(
