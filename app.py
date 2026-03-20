@@ -1,4 +1,3 @@
-
 import os
 import io
 import base64
@@ -271,7 +270,6 @@ def move_slide(prs, from_idx: int, to_idx: int):
     slide_id = sldIdLst[from_idx]
     del sldIdLst[from_idx]
 
-    # after removing the source slide, indexes shift
     if to_idx > from_idx:
         to_idx -= 1
 
@@ -290,22 +288,17 @@ def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
 
     block_len = end_idx - start_idx + 1
 
-    # no-op if the block is already there, or target falls inside the block
     if target_idx >= start_idx and target_idx <= end_idx + 1:
         return
 
-    # capture the block first
     block = [sldIdLst[i] for i in range(start_idx, end_idx + 1)]
 
-    # remove the block
     for _ in range(block_len):
         del sldIdLst[start_idx]
 
-    # if target was after the original block, adjust after removal
     if target_idx > end_idx:
         target_idx -= block_len
 
-    # insert back in the same order
     for offset, slide_id in enumerate(block):
         sldIdLst.insert(target_idx + offset, slide_id)
 
@@ -529,6 +522,39 @@ def reset_editor():
     st.session_state["selected_song_section_id"] = None
 
 
+def load_song_preview_if_possible():
+    if (
+        st.session_state.get("selected_template_name")
+        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
+        and soffice_available()
+    ):
+        try:
+            template_bytes = st.session_state["uploaded_templates"][
+                st.session_state["selected_template_name"]
+            ]
+            template_ok, _, _ = validate_template_bytes(template_bytes)
+
+            if template_ok:
+                current_slides = get_current_slides(st.session_state["editor_text"])
+                if current_slides:
+                    song_item = build_editor_song_item(current_slides)
+                    refresh_current_song_preview(song_item, template_bytes)
+                    st.session_state["current_preview_slide"] = 1
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["editor_status_message"] = "Song preview loaded."
+                else:
+                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
+            else:
+                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
+        except Exception as e:
+            st.session_state["editor_status_message"] = preview_error_message(e)
+    else:
+        if not st.session_state.get("selected_template_name"):
+            st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
+        elif not soffice_available():
+            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
+
+
 def load_song_into_editor(match):
     lyrics_raw = str(match.get("Lyrics (Raw)", "")).strip()
 
@@ -559,36 +585,7 @@ def load_song_into_editor(match):
     st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
 
-    if (
-        st.session_state.get("selected_template_name")
-        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
-        and soffice_available()
-    ):
-        try:
-            template_bytes = st.session_state["uploaded_templates"][
-                st.session_state["selected_template_name"]
-            ]
-            template_ok, _, _ = validate_template_bytes(template_bytes)
-
-            if template_ok:
-                current_slides = get_current_slides(st.session_state["editor_text"])
-                if current_slides:
-                    song_item = build_editor_song_item(current_slides)
-                    refresh_current_song_preview(song_item, template_bytes)
-                    st.session_state["current_preview_slide"] = 1
-                    st.session_state["preview_mode"] = "song"
-                    st.session_state["editor_status_message"] = "Song preview loaded."
-                else:
-                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
-            else:
-                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
-        except Exception as e:
-            st.session_state["editor_status_message"] = f"Preview load failed: {e}"
-    else:
-        if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
-        elif not soffice_available():
-            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
+    load_song_preview_if_possible()
 
 
 def apply_pending_setlist_load():
@@ -620,12 +617,8 @@ def apply_pending_setlist_load():
     st.session_state["editor_override_line_spacing"] = item.get(
         "override_line_spacing", False
     )
-    st.session_state["editor_lyrics_font_size_pt"] = (
-        item.get("lyrics_font_size_pt", 32) or 32
-    )
-    st.session_state["editor_line_spacing"] = (
-        item.get("line_spacing", 1.2) or 1.2
-    )
+    st.session_state["editor_lyrics_font_size_pt"] = item.get("lyrics_font_size_pt", 32) or 32
+    st.session_state["editor_line_spacing"] = item.get("line_spacing", 1.2) or 1.2
     st.session_state["selected_song_section_id"] = item.get("section_id")
 
     if (
@@ -643,36 +636,7 @@ def apply_pending_setlist_load():
     st.session_state["preview_mode"] = "song"
     st.session_state["editor_ace_key"] += 1
 
-    if (
-        st.session_state.get("selected_template_name")
-        and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
-        and soffice_available()
-    ):
-        try:
-            template_bytes = st.session_state["uploaded_templates"][
-                st.session_state["selected_template_name"]
-            ]
-            template_ok, _, _ = validate_template_bytes(template_bytes)
-
-            if template_ok:
-                current_slides = get_current_slides(st.session_state["editor_text"])
-                if current_slides:
-                    song_item = build_editor_song_item(current_slides)
-                    refresh_current_song_preview(song_item, template_bytes)
-                    st.session_state["current_preview_slide"] = 1
-                    st.session_state["preview_mode"] = "song"
-                    st.session_state["editor_status_message"] = "Song preview loaded."
-                else:
-                    st.session_state["editor_status_message"] = "Song loaded, but no slides detected for preview."
-            else:
-                st.session_state["editor_status_message"] = "Song loaded, but selected template is invalid."
-        except Exception as e:
-            st.session_state["editor_status_message"] = f"Preview load failed: {e}"
-    else:
-        if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
-        elif not soffice_available():
-            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
+    load_song_preview_if_possible()
 
 
 # =========================================================
@@ -772,10 +736,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    # Insert section-by-section, not song-by-song
     for sec_id, sec_title, section_song_pairs in grouped_sections:
         if sec_id is None:
-            # unassigned songs -> append at end
             add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
             continue
 
@@ -816,21 +778,11 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 # PREVIEW HELPERS
 # =========================================================
 def pptx_to_preview_images(pptx_bytes: BytesIO):
-    debug_copy_path = "/tmp/debug_generated_preview.pptx"
-
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
-
-        try:
-            with open(debug_copy_path, "wb") as f:
-                f.write(pptx_bytes.getvalue())
-            st.caption(f"Debug PPTX saved to: {debug_copy_path}")
-        except Exception as e:
-            debug_copy_path = None
-            st.warning(f"Could not save debug PPTX copy: {e}")
 
         cmd = [
             SOFFICE_PATH,
@@ -840,40 +792,16 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
             pptx_path,
         ]
 
-        st.caption("LibreOffice command:")
-        st.code(" ".join(cmd))
-
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        st.caption(f"LibreOffice return code: {result.returncode}")
-
-        with st.expander("LibreOffice stdout", expanded=False):
-            st.code(result.stdout if result.stdout else "(empty)")
-
-        with st.expander("LibreOffice stderr", expanded=True):
-            st.code(result.stderr if result.stderr else "(empty)")
-
         if result.returncode != 0:
-            raise RuntimeError(
-                "LibreOffice conversion failed.\n"
-                f"Return code: {result.returncode}\n"
-                f"Debug PPTX: {debug_copy_path}\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
+            raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
-            raise FileNotFoundError(
-                "No PDF created.\n"
-                f"Debug PPTX: {debug_copy_path}\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
+            raise FileNotFoundError("Preview PDF was not created.")
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
-        st.caption(f"Generated PDF: {pdf_path}")
-
         doc = fitz.open(pdf_path)
 
         images = []
@@ -896,6 +824,17 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         doc.close()
         return images
+
+
+def preview_error_message(exc: Exception) -> str:
+    msg = str(exc).strip()
+
+    if "Preview conversion failed" in msg:
+        return "Preview generation failed. Please check LibreOffice/soffice setup."
+    if "Preview PDF was not created" in msg:
+        return "Preview generation failed because no PDF preview could be created."
+
+    return f"Preview generation failed: {msg}"
 
 
 def render_scrollable_images(images, height=760, active_slide=None):
@@ -1649,7 +1588,7 @@ with main_left:
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
             except Exception as e:
-                st.error(f"Preview generation failed: {e}")
+                st.error(preview_error_message(e))
 
     new_signature = build_current_song_signature(
         song_item,
@@ -1723,7 +1662,7 @@ with main_left:
             refresh_current_song_preview(song_item, selected_template_bytes)
             st.session_state["editor_status_message"] = "Song preview auto-refreshed."
         except Exception as e:
-            st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+            st.session_state["editor_status_message"] = preview_error_message(e)
 
     st.session_state["last_editor_text"] = editor_text
     st.session_state["last_split_settings"] = current_split_settings
@@ -1819,7 +1758,7 @@ with main_left:
                         st.session_state["preview_mode"] = "song"
                         st.session_state["editor_status_message"] = "Song updated and preview refreshed."
                     except Exception as e:
-                        st.session_state["editor_status_message"] = f"Preview refresh failed: {e}"
+                        st.session_state["editor_status_message"] = preview_error_message(e)
 
                 st.success(
                     f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
@@ -1889,7 +1828,7 @@ with main_right:
                         selected_template_bytes,
                     )
                 except Exception as e:
-                    st.error(f"Service preview generation failed: {e}")
+                    st.error(preview_error_message(e))
 
             starts = st.session_state.get("service_song_start_slides", [])
             selected_index = st.session_state.get("setlist_selected_index", 0)
