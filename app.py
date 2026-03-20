@@ -797,11 +797,21 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
+            raise RuntimeError(
+                "Preview conversion failed.\n"
+                f"Return code: {result.returncode}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
-            raise FileNotFoundError("Preview PDF was not created.")
+            raise RuntimeError(
+                "Preview PDF was not created.\n"
+                f"Files in temp dir: {os.listdir(tmpdir)}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
 
@@ -816,13 +826,14 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         images = []
         try:
             for page in doc:
-                pix = page.get_pixmap(dpi=72, alpha=False)
+                pix = page.get_pixmap(dpi=60, alpha=False)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=60, optimize=True)
+                img.save(buffer, format="JPEG", quality=45, optimize=True)
                 images.append(buffer.getvalue())
 
+                buffer.close()
                 del pix
                 del img
                 del buffer
@@ -836,9 +847,9 @@ def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
 
     if "Preview conversion failed" in msg:
-        return "Preview generation failed. Please check LibreOffice/soffice setup."
+        return msg
     if "Preview PDF was not created" in msg:
-        return "Preview generation failed because no PDF preview could be created."
+        return msg
     if "No common ancestor in structure tree" in msg:
         return "Preview generation failed because the generated PDF structure is malformed. The app tried to repair it, but PyMuPDF still could not render it."
 
@@ -908,6 +919,8 @@ def render_scrollable_images(images, height=760, active_slide=None):
 # AUTO PREVIEW HELPERS
 # =========================================================
 def refresh_current_song_preview(song_item, template_bytes):
+    st.session_state["current_song_preview_images"] = None
+
     ppt_data = create_single_song_ppt(song_item, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
 
@@ -1062,6 +1075,8 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
 def refresh_service_preview(setlist, template_bytes):
     st.session_state["service_preview_images"] = None
+    st.session_state["ppt_data"] = None
+
     ppt_data = create_combined_ppt(setlist, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
 
@@ -1580,6 +1595,9 @@ with main_left:
     else:
         st.session_state["editor_text"] = editor_text
 
+    if editor_text != old_text:
+        clear_service_outputs()
+
     current_slides = get_current_slides(editor_text)
     song_item = build_editor_song_item(current_slides)
 
@@ -1781,6 +1799,11 @@ with main_right:
         horizontal=True,
     )
     st.session_state["preview_mode"] = preview_mode.lower()
+
+    if st.session_state["preview_mode"] == "song":
+        st.session_state["service_preview_images"] = None
+    else:
+        st.session_state["current_song_preview_images"] = None
 
     preview_images = None
 
