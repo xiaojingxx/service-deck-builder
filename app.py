@@ -149,12 +149,10 @@ def search_titles(keyword: str, limit: int = 20):
 def split_slides_manual(text: str) -> list[list[str]]:
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
-
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
-
     return slides
 
 
@@ -260,6 +258,18 @@ def delete_slide_by_index(prs, slide_index: int):
     del prs.slides._sldIdLst[slide_index]
 
 
+def move_slide(prs, old_index: int, new_index: int):
+    sldIdLst = prs.slides._sldIdLst
+    slide = sldIdLst[old_index]
+    del sldIdLst[old_index]
+    sldIdLst.insert(new_index, slide)
+
+
+def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
+    for idx in range(end_idx, start_idx - 1, -1):
+        move_slide(prs, idx, target_idx)
+
+
 def get_slide_layout_name(slide):
     try:
         return slide.slide_layout.name.strip()
@@ -302,11 +312,7 @@ def template_has_layout(prs, layout_name: str) -> bool:
 
 
 def count_divider_slides(prs) -> int:
-    count = 0
-    for slide in prs.slides:
-        if get_slide_layout_name(slide).strip() == DIVIDER_LAYOUT_NAME:
-            count += 1
-    return count
+    return sum(1 for slide in prs.slides if is_divider_slide(slide))
 
 
 def find_divider_slides_missing_titles(prs):
@@ -339,8 +345,7 @@ def validate_template_bytes(template_bytes: bytes):
             f"Create it in Slide Master and use it for all service divider slides."
         )
 
-    divider_slide_count = count_divider_slides(prs)
-    if divider_slide_count == 0:
+    if count_divider_slides(prs) == 0:
         errors.append(
             f"No divider slides found using layout {DIVIDER_LAYOUT_NAME}. "
             f"Add at least one divider slide based on that layout."
@@ -414,10 +419,7 @@ def sync_sections_from_template(template_bytes: bytes):
     )
 
     existing_sections = st.session_state.get("service_sections", [])
-    existing_song_map = {
-        sec["title"]: sec.get("songs", [])
-        for sec in existing_sections
-    }
+    existing_song_map = {sec["title"]: sec.get("songs", []) for sec in existing_sections}
     existing_include_content_map = {
         sec["title"]: sec.get("include_template_content", True)
         for sec in existing_sections
@@ -445,6 +447,29 @@ def sync_sections_from_template(template_bytes: bytes):
             st.session_state["selected_section_dropdown"] = st.session_state["selected_section_id"]
         if st.session_state.get("editor_target_section_id") not in valid_ids:
             st.session_state["editor_target_section_id"] = st.session_state["selected_section_id"]
+
+
+def find_section_bounds(prs, section_title: str):
+    divider_idx = None
+
+    for i, slide in enumerate(prs.slides):
+        if is_divider_slide(slide):
+            title_text = get_divider_title(slide, fallback="")
+            if title_text == section_title:
+                divider_idx = i
+                break
+
+    if divider_idx is None:
+        raise ValueError(f'Section "{section_title}" not found in current deck.')
+
+    next_divider_idx = None
+    for j in range(divider_idx + 1, len(prs.slides)):
+        if is_divider_slide(prs.slides[j]):
+            next_divider_idx = j
+            break
+
+    insert_index = len(prs.slides) if next_divider_idx is None else next_divider_idx
+    return divider_idx, insert_index
 
 
 # =========================================================
@@ -537,6 +562,8 @@ def add_song_to_presentation(prs, song, first_layout, rest_layout):
 
     full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
 
+    start_idx = len(prs.slides)
+
     for i, slide_lines in enumerate(slides):
         lyrics_text = "\n".join(slide_lines)
 
@@ -557,6 +584,9 @@ def add_song_to_presentation(prs, song, first_layout, rest_layout):
                 font_size_pt=lyrics_font_size_pt,
                 line_spacing=line_spacing,
             )
+
+    end_idx = len(prs.slides) - 1
+    return start_idx, end_idx
 
 
 def create_single_song_ppt(song_item, template_bytes: bytes):
@@ -588,31 +618,46 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
 
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
-
         for sec in service_sections:
             for song in sec.get("songs", []):
                 add_song_to_presentation(prs, song, first_layout, rest_layout)
-
         output = BytesIO()
         prs.save(output)
         output.seek(0)
         return output
 
+    # delete hidden template slides first
     slides_to_delete = []
-
     for sec in service_sections:
         if sec.get("divider_index") is not None and not sec.get("include_divider", True):
             slides_to_delete.append(sec["divider_index"])
-
         if not sec.get("include_template_content", True):
             slides_to_delete.extend(sec.get("template_slide_indices", []))
 
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
+    # insert songs section by section
+    append_later = []
+
     for sec in service_sections:
+        section_title = sec["title"]
+
+        if not sec.get("include_divider", True):
+            append_later.extend(sec.get("songs", []))
+            continue
+
         for song in sec.get("songs", []):
-            add_song_to_presentation(prs, song, first_layout, rest_layout)
+            try:
+                _, insert_index = find_section_bounds(prs, section_title)
+                start_idx, end_idx = add_song_to_presentation(prs, song, first_layout, rest_layout)
+                move_slide_block(prs, start_idx, end_idx, insert_index)
+            except Exception:
+                append_later.append(song)
+
+    # any unanchored songs go to end
+    for song in append_later:
+        add_song_to_presentation(prs, song, first_layout, rest_layout)
 
     output = BytesIO()
     prs.save(output)
@@ -649,11 +694,12 @@ def get_service_section_start_slides(sections):
         starts[sec["id"]] = slide_counter
 
         if st.session_state.get("preserve_template_slides", True):
-            if sec.get("include_divider", True) and sec.get("divider_index") is not None:
+            if sec.get("include_divider", True):
                 slide_counter += 1
-
             if sec.get("include_template_content", True):
                 slide_counter += len(sec.get("template_slide_indices", []))
+
+        slide_counter += sum(len(song["slides"]) for song in sec.get("songs", []))
 
     return starts
 
@@ -1663,7 +1709,7 @@ with main_right:
             if st.session_state.get("service_preview_fallback_mode"):
                 st.warning(
                     "Preview is showing songs-only mode because the uploaded template slides "
-                    "could not be safely rewritten for preview."
+                    "could not be safely rendered after rewriting."
                 )
                 st.session_state["current_preview_slide"] = 1
             else:
