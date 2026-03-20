@@ -1,3 +1,4 @@
+
 import os
 import io
 import base64
@@ -98,7 +99,6 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
-    "section_output_order": [],
     "service_output_mode": "full",  # full | songs
     "selected_song_section_id": None,
 }
@@ -271,6 +271,7 @@ def move_slide(prs, from_idx: int, to_idx: int):
     slide_id = sldIdLst[from_idx]
     del sldIdLst[from_idx]
 
+    # after removing the source slide, indexes shift
     if to_idx > from_idx:
         to_idx -= 1
 
@@ -279,8 +280,8 @@ def move_slide(prs, from_idx: int, to_idx: int):
 
 def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
     """
-    Move a contiguous block [start_idx, end_idx] so that the block starts at target_idx.
-    Preserves internal slide order.
+    Move a contiguous block of slides [start_idx, end_idx] so that the block
+    starts at target_idx, preserving the original order of the block.
     """
     sldIdLst = prs.slides._sldIdLst
 
@@ -289,18 +290,22 @@ def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
 
     block_len = end_idx - start_idx + 1
 
-    # no-op if target falls inside the block or immediately after it
+    # no-op if the block is already there, or target falls inside the block
     if target_idx >= start_idx and target_idx <= end_idx + 1:
         return
 
+    # capture the block first
     block = [sldIdLst[i] for i in range(start_idx, end_idx + 1)]
 
+    # remove the block
     for _ in range(block_len):
         del sldIdLst[start_idx]
 
+    # if target was after the original block, adjust after removal
     if target_idx > end_idx:
         target_idx -= block_len
 
+    # insert back in the same order
     for offset, slide_id in enumerate(block):
         sldIdLst.insert(target_idx + offset, slide_id)
 
@@ -344,7 +349,6 @@ def parse_template_sections(template_bytes: bytes):
         if is_divider_slide(slide):
             current_section = {
                 "id": f"sec_{section_counter}",
-                "order": section_counter,
                 "title": get_divider_title(slide, fallback=f"Section {section_counter + 1}"),
                 "divider_index": i,
                 "content_slide_indices": [],
@@ -365,100 +369,30 @@ def get_section_title_by_id(section_id):
     return None
 
 
-def get_template_section_ids():
-    return [sec["id"] for sec in st.session_state.get("template_sections", [])]
+def get_current_divider_positions(prs):
+    positions = []
+    for i, slide in enumerate(prs.slides):
+        if is_divider_slide(slide):
+            positions.append((i, get_divider_title(slide)))
+    return positions
 
 
-def get_template_section_map():
-    return {sec["id"]: sec for sec in st.session_state.get("template_sections", [])}
+def find_section_insert_index(prs, section_title: str):
+    divider_positions = get_current_divider_positions(prs)
 
+    match_index = None
+    for idx, (_, title) in enumerate(divider_positions):
+        if title == section_title:
+            match_index = idx
+            break
 
-def get_current_divider_indices(prs):
-    return [i for i, slide in enumerate(prs.slides) if is_divider_slide(slide)]
+    if match_index is None:
+        return len(prs.slides)
 
+    if match_index + 1 < len(divider_positions):
+        return divider_positions[match_index + 1][0]
 
-def get_current_section_block_ranges(prs):
-    """
-    Returns section block ranges in CURRENT deck order.
-    Each range includes:
-    - divider slide
-    - all template/content/song slides under it until the next divider
-    """
-    divider_indices = get_current_divider_indices(prs)
-    ranges = []
-
-    for i, start in enumerate(divider_indices):
-        if i + 1 < len(divider_indices):
-            end = divider_indices[i + 1] - 1
-        else:
-            end = len(prs.slides) - 1
-
-        ranges.append((start, end))
-
-    return ranges
-
-
-def reorder_template_sections_in_prs(prs, desired_section_ids):
-    """
-    Reorder whole template section blocks by stable section IDs.
-    No title matching.
-    """
-    current_order = get_template_section_ids()
-    if not current_order:
-        return []
-
-    desired = [sid for sid in desired_section_ids if sid in current_order]
-    for sid in current_order:
-        if sid not in desired:
-            desired.append(sid)
-
-    for target_pos, desired_sid in enumerate(desired):
-        current_pos = current_order.index(desired_sid)
-        if current_pos == target_pos:
-            continue
-
-        ranges = get_current_section_block_ranges(prs)
-        if current_pos >= len(ranges) or target_pos >= len(ranges):
-            continue
-
-        start_idx, end_idx = ranges[current_pos]
-        target_start_idx = ranges[target_pos][0]
-
-        move_slide_block(prs, start_idx, end_idx, target_start_idx)
-
-        moved_sid = current_order.pop(current_pos)
-        current_order.insert(target_pos, moved_sid)
-
-    return current_order
-
-
-def hide_section_contents_in_prs(prs, current_section_order, hidden_section_ids):
-    """
-    Hide template content slides under selected divider sections, but keep divider slides.
-    Operates on CURRENT deck order after section reordering.
-    """
-    hidden = set(hidden_section_ids)
-    if not hidden:
-        return
-
-    ranges = get_current_section_block_ranges(prs)
-    slides_to_delete = []
-
-    for pos, sec_id in enumerate(current_section_order):
-        if sec_id not in hidden:
-            continue
-        if pos >= len(ranges):
-            continue
-
-        start_idx, end_idx = ranges[pos]
-
-        # keep divider (start_idx), delete only section content currently under it
-        # at this stage, before songs are inserted, these are template content slides
-        for idx in range(start_idx + 1, end_idx + 1):
-            slides_to_delete.append(idx)
-
-    for idx in sorted(set(slides_to_delete), reverse=True):
-        delete_slide_by_index(prs, idx)
+    return len(prs.slides)
 
 
 def validate_template_bytes(template_bytes: bytes):
@@ -533,44 +467,42 @@ def build_current_song_signature(song_item, selected_template_name):
     )
 
 
-def group_songs_by_section_id(setlist):
-    valid_section_ids = set(get_template_section_ids())
-    songs_by_section = {}
-    unassigned = []
+def get_ordered_songs_for_output(setlist):
+    sections = st.session_state.get("template_sections", [])
+    songs_by_section = {sec["id"]: [] for sec in sections}
+    unassigned_songs = []
 
     for idx, song in enumerate(setlist):
         sec_id = song.get("section_id")
-        if sec_id in valid_section_ids:
-            songs_by_section.setdefault(sec_id, []).append((idx, song))
+        if sec_id in songs_by_section:
+            songs_by_section[sec_id].append((idx, song))
         else:
-            unassigned.append((idx, song))
-
-    return songs_by_section, unassigned
-
-
-def get_ordered_songs_for_output(setlist):
-    section_order = st.session_state.get("section_output_order", [])
-    songs_by_section, unassigned = group_songs_by_section_id(setlist)
+            unassigned_songs.append((idx, song))
 
     ordered = []
-    for sec_id in section_order:
-        ordered.extend(songs_by_section.get(sec_id, []))
-    ordered.extend(unassigned)
+    for sec in sections:
+        ordered.extend(songs_by_section.get(sec["id"], []))
+    ordered.extend(unassigned_songs)
     return ordered
 
 
 def group_songs_by_section_order(setlist):
-    section_order = st.session_state.get("section_output_order", [])
-    section_map = get_template_section_map()
-    songs_by_section, unassigned = group_songs_by_section_id(setlist)
+    sections = st.session_state.get("template_sections", [])
+    songs_by_section = {sec["id"]: [] for sec in sections}
+    unassigned = []
+
+    for idx, song in enumerate(setlist):
+        sec_id = song.get("section_id")
+        if sec_id in songs_by_section:
+            songs_by_section[sec_id].append((idx, song))
+        else:
+            unassigned.append((idx, song))
 
     ordered_groups = []
-    for sec_id in section_order:
-        section_songs = songs_by_section.get(sec_id, [])
+    for sec in sections:
+        section_songs = songs_by_section.get(sec["id"], [])
         if section_songs:
-            sec = section_map.get(sec_id)
-            title = sec["title"] if sec else None
-            ordered_groups.append((sec_id, title, section_songs))
+            ordered_groups.append((sec["id"], sec["title"], section_songs))
 
     if unassigned:
         ordered_groups.append((None, None, unassigned))
@@ -594,11 +526,7 @@ def reset_editor():
     st.session_state["editor_status_message"] = ""
     st.session_state["current_preview_slide"] = 1
     st.session_state["editor_ace_key"] += 1
-
-    if st.session_state.get("template_sections"):
-        st.session_state["selected_song_section_id"] = st.session_state["template_sections"][0]["id"]
-    else:
-        st.session_state["selected_song_section_id"] = None
+    st.session_state["selected_song_section_id"] = None
 
 
 def load_song_into_editor(match):
@@ -794,40 +722,10 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
 
 def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout):
     start_idx = len(prs.slides)
-
     for _, song in section_song_pairs:
         add_song_block_to_prs(prs, song, first_layout, rest_layout)
-
     end_idx = len(prs.slides) - 1
     return start_idx, end_idx
-
-
-def insert_song_blocks_into_sections(prs, setlist, first_layout, rest_layout, current_section_order):
-    songs_by_section, unassigned = group_songs_by_section_id(setlist)
-
-    for pos, sec_id in enumerate(current_section_order):
-        section_song_pairs = songs_by_section.get(sec_id, [])
-        if not section_song_pairs:
-            continue
-
-        ranges = get_current_section_block_ranges(prs)
-        if pos >= len(ranges):
-            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
-            continue
-
-        _, end_idx = ranges[pos]
-        target_idx = end_idx + 1
-
-        start_idx, block_end_idx = add_section_song_block_to_prs(
-            prs,
-            section_song_pairs,
-            first_layout,
-            rest_layout,
-        )
-        move_slide_block(prs, start_idx, block_end_idx, target_idx)
-
-    if unassigned:
-        add_section_song_block_to_prs(prs, unassigned, first_layout, rest_layout)
 
 
 def create_combined_ppt(setlist, template_bytes: bytes):
@@ -841,8 +739,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     output_mode = st.session_state.get("service_output_mode", "full")
     ordered_songs = get_ordered_songs_for_output(setlist)
+    grouped_sections = group_songs_by_section_order(setlist)
 
-    # Songs-only mode: ignore template slides entirely
     if output_mode == "songs":
         delete_all_slides(prs)
         for _, song in ordered_songs:
@@ -853,7 +751,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Full mode, but user does not want template slides
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
         for _, song in ordered_songs:
@@ -864,36 +761,32 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # No sections found in template: keep template slides and append songs
-    template_sections = st.session_state.get("template_sections", [])
-    if not template_sections:
-        for _, song in ordered_songs:
-            add_song_block_to_prs(prs, song, first_layout, rest_layout)
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    sections = st.session_state.get("template_sections", [])
 
-        output = BytesIO()
-        prs.save(output)
-        output.seek(0)
-        return output
+    slides_to_delete = []
+    for sec in sections:
+        if sec["id"] in hidden_ids:
+            slides_to_delete.extend(sec.get("content_slide_indices", []))
 
-    # 1. reorder template section blocks by stable IDs
-    desired_order = st.session_state.get("section_output_order", get_template_section_ids())
-    current_section_order = reorder_template_sections_in_prs(prs, desired_order)
+    for idx in sorted(set(slides_to_delete), reverse=True):
+        delete_slide_by_index(prs, idx)
 
-    # 2. optionally hide template content under selected sections, keeping divider slides
-    hide_section_contents_in_prs(
-        prs,
-        current_section_order=current_section_order,
-        hidden_section_ids=st.session_state.get("hidden_section_ids", []),
-    )
+    # Insert section-by-section, not song-by-song
+    for sec_id, sec_title, section_song_pairs in grouped_sections:
+        if sec_id is None:
+            # unassigned songs -> append at end
+            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
+            continue
 
-    # 3. insert section song blocks into reordered sections
-    insert_song_blocks_into_sections(
-        prs,
-        setlist,
-        first_layout,
-        rest_layout,
-        current_section_order=current_section_order,
-    )
+        target_idx = find_section_insert_index(prs, sec_title)
+        start_idx, end_idx = add_section_song_block_to_prs(
+            prs,
+            section_song_pairs,
+            first_layout,
+            rest_layout,
+        )
+        move_slide_block(prs, start_idx, end_idx, target_idx)
 
     output = BytesIO()
     prs.save(output)
@@ -1195,36 +1088,21 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
             slide_counter += len(song["slides"])
         return starts
 
-    sections = get_template_section_map()
-    section_order = st.session_state.get("section_output_order", [])
+    sections = st.session_state.get("template_sections", [])
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-    songs_by_section, unassigned = group_songs_by_section_id(setlist)
+    groups = group_songs_by_section_order(setlist)
 
-    # no divider sections in template
-    if not section_order:
-        slide_counter = 1
-        template_slide_count = len(open_presentation_from_bytes(template_bytes).slides)
-        slide_counter += template_slide_count
-
-        ordered = get_ordered_songs_for_output(setlist)
-        for original_idx, song in ordered:
-            starts[original_idx] = slide_counter
-            slide_counter += len(song["slides"])
-        return starts
+    songs_by_sec = {sec_id: song_pairs for sec_id, _, song_pairs in groups if sec_id is not None}
+    unassigned = next((song_pairs for sec_id, _, song_pairs in groups if sec_id is None), [])
 
     slide_counter = 1
 
-    for sec_id in section_order:
-        # divider
-        slide_counter += 1
-
-        # template content under divider
-        sec = sections.get(sec_id)
-        if sec and sec_id not in hidden_ids:
+    for sec in sections:
+        slide_counter += 1  # divider
+        if sec["id"] not in hidden_ids:
             slide_counter += len(sec.get("content_slide_indices", []))
 
-        # songs under section
-        for original_idx, song in songs_by_section.get(sec_id, []):
+        for original_idx, song in songs_by_sec.get(sec["id"], []):
             starts[original_idx] = slide_counter
             slide_counter += len(song["slides"])
 
@@ -1277,30 +1155,27 @@ selected_template_bytes, selected_template_ok, selected_template_errors, selecte
 if selected_template_bytes and selected_template_ok:
     try:
         current_sections = parse_template_sections(selected_template_bytes)
+        old_sections = st.session_state.get("template_sections", [])
 
-        old_hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-        old_order = st.session_state.get("section_output_order", [])
+        old_hidden_by_title = {
+            sec["title"]: (sec["id"] in st.session_state.get("hidden_section_ids", []))
+            for sec in old_sections
+        }
 
         st.session_state["template_sections"] = current_sections
 
-        new_ids = [sec["id"] for sec in current_sections]
-
-        st.session_state["hidden_section_ids"] = [
-            sid for sid in old_hidden_ids if sid in new_ids
-        ]
-
-        preserved = [sid for sid in old_order if sid in new_ids]
-        missing = [sid for sid in new_ids if sid not in preserved]
-        st.session_state["section_output_order"] = preserved + missing
+        new_hidden_ids = []
+        for sec in current_sections:
+            if old_hidden_by_title.get(sec["title"], False):
+                new_hidden_ids.append(sec["id"])
+        st.session_state["hidden_section_ids"] = new_hidden_ids
 
     except Exception:
         st.session_state["template_sections"] = []
         st.session_state["hidden_section_ids"] = []
-        st.session_state["section_output_order"] = []
 else:
     st.session_state["template_sections"] = []
     st.session_state["hidden_section_ids"] = []
-    st.session_state["section_output_order"] = []
 
 if st.session_state.get("template_sections"):
     valid_section_ids = {sec["id"] for sec in st.session_state["template_sections"]}
@@ -1430,7 +1305,6 @@ with st.sidebar:
                 st.session_state["selected_template_name"] = None
                 st.session_state["template_sections"] = []
                 st.session_state["hidden_section_ids"] = []
-                st.session_state["section_output_order"] = []
                 st.session_state["selected_song_section_id"] = None
                 clear_service_outputs()
                 st.rerun()
@@ -1445,7 +1319,7 @@ with st.sidebar:
                 "Service output mode",
                 options=["full", "songs"],
                 format_func=lambda x: (
-                    "Full deck (reorder sections + insert by section ID)"
+                    "Full deck (insert section-by-section)"
                     if x == "full"
                     else "Songs only (for checking)"
                 ),
@@ -1453,36 +1327,6 @@ with st.sidebar:
             )
 
             if selected_template_ok and st.session_state["template_sections"]:
-                st.divider()
-                st.markdown("#### Section Output Order")
-
-                section_map = get_template_section_map()
-                section_order = st.session_state.get("section_output_order", [])
-
-                for i, sec_id in enumerate(section_order):
-                    sec = section_map.get(sec_id)
-                    if not sec:
-                        continue
-
-                    col1, col2, col3 = st.columns([6, 1, 1])
-
-                    with col1:
-                        st.caption(f"{i+1}. {sec['title']}")
-
-                    with col2:
-                        if st.button("⬆️", key=f"sec_up_{sec_id}", use_container_width=True) and i > 0:
-                            section_order[i - 1], section_order[i] = section_order[i], section_order[i - 1]
-                            st.session_state["section_output_order"] = section_order
-                            clear_service_outputs()
-                            st.rerun()
-
-                    with col3:
-                        if st.button("⬇️", key=f"sec_down_{sec_id}", use_container_width=True) and i < len(section_order) - 1:
-                            section_order[i + 1], section_order[i] = section_order[i], section_order[i + 1]
-                            st.session_state["section_output_order"] = section_order
-                            clear_service_outputs()
-                            st.rerun()
-
                 st.divider()
                 st.markdown("#### Hide Template Section Contents")
 
@@ -1499,11 +1343,8 @@ with st.sidebar:
                     key="hidden_section_ids",
                 )
 
-                for sec_id in st.session_state["section_output_order"]:
-                    sec = section_map.get(sec_id)
-                    if not sec:
-                        continue
-                    hidden = sec_id in st.session_state["hidden_section_ids"]
+                for sec in st.session_state["template_sections"]:
+                    hidden = sec["id"] in st.session_state["hidden_section_ids"]
                     status = "content hidden" if hidden else "content shown"
                     st.caption(
                         f'{sec["title"]}: {len(sec["content_slide_indices"])} content slide(s) · divider kept · {status}'
@@ -2019,7 +1860,7 @@ with main_right:
         if st.session_state.get("service_output_mode") == "songs":
             st.caption("Output mode: songs only (for checking)")
         else:
-            st.caption("Output mode: full deck with section reordering and section-based insertion")
+            st.caption("Output mode: full deck with section-by-section insertion")
 
         can_generate = (
             selected_template_bytes is not None
