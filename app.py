@@ -99,6 +99,7 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
+    "service_output_mode": "full",  # "full" or "songs"
 }
 
 for key, value in DEFAULTS.items():
@@ -367,31 +368,7 @@ def build_current_song_signature(song_item, selected_template_name):
     )
 
 
-def create_combined_ppt(setlist, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
-
-    if not st.session_state.get("preserve_template_slides", True):
-        delete_all_slides(prs)
-    else:
-        hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-        sections = st.session_state.get("template_sections", [])
-
-        slides_to_delete = []
-        for sec in sections:
-            if sec["id"] in hidden_ids:
-                if sec.get("divider_index") is not None:
-                    slides_to_delete.append(sec["divider_index"])
-                slides_to_delete.extend(sec.get("content_slide_indices", []))
-
-        for idx in sorted(set(slides_to_delete), reverse=True):
-            delete_slide_by_index(prs, idx)
-
+def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
     for song in setlist:
         umh_number = str(song["umh_number"]).strip()
         title = str(song["title"]).strip()
@@ -427,6 +404,45 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                     font_size_pt=lyrics_font_size_pt,
                     line_spacing=line_spacing,
                 )
+
+
+def create_combined_ppt(setlist, template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    output_mode = st.session_state.get("service_output_mode", "full")
+
+    # Songs-only checking deck
+    if output_mode == "songs":
+        delete_all_slides(prs)
+        add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
+
+        output = BytesIO()
+        prs.save(output)
+        output.seek(0)
+        return output
+
+    # Full deck mode
+    if not st.session_state.get("preserve_template_slides", True):
+        delete_all_slides(prs)
+    else:
+        hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+        sections = st.session_state.get("template_sections", [])
+
+        slides_to_delete = []
+        for sec in sections:
+            if sec["id"] in hidden_ids:
+                slides_to_delete.extend(sec.get("content_slide_indices", []))
+
+        for idx in sorted(set(slides_to_delete), reverse=True):
+            delete_slide_by_index(prs, idx)
+
+    add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
 
     output = BytesIO()
     prs.save(output)
@@ -859,12 +875,36 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
     return None
 
 
-def get_service_song_start_slides(setlist):
+def get_retained_template_slide_count(template_bytes: bytes):
+    if (
+        st.session_state.get("service_output_mode") == "songs"
+        or not st.session_state.get("preserve_template_slides", True)
+    ):
+        return 0
+
+    prs = open_presentation_from_bytes(template_bytes)
+    total = len(prs.slides)
+
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    sections = st.session_state.get("template_sections", [])
+
+    deleted_content = 0
+    for sec in sections:
+        if sec["id"] in hidden_ids:
+            deleted_content += len(sec.get("content_slide_indices", []))
+
+    return max(0, total - deleted_content)
+
+
+def get_service_song_start_slides(setlist, template_bytes: bytes):
     starts = []
-    slide_counter = 1
+    base = get_retained_template_slide_count(template_bytes)
+    slide_counter = base + 1
+
     for song in setlist:
         starts.append(slide_counter)
         slide_counter += len(song["slides"])
+
     return starts
 
 
@@ -877,7 +917,9 @@ def refresh_service_preview(setlist, template_bytes):
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
-    st.session_state["service_song_start_slides"] = get_service_song_start_slides(setlist)
+    st.session_state["service_song_start_slides"] = get_service_song_start_slides(
+        setlist, template_bytes
+    )
 
 
 def clear_service_outputs():
@@ -1032,9 +1074,20 @@ with st.sidebar:
                 key="preserve_template_slides",
             )
 
+            st.radio(
+                "Service output mode",
+                options=["full", "songs"],
+                format_func=lambda x: (
+                    "Full deck (template kept, songs appended at end)"
+                    if x == "full"
+                    else "Songs only (for checking)"
+                ),
+                key="service_output_mode",
+            )
+
             if selected_template_ok and st.session_state["template_sections"]:
                 st.divider()
-                st.markdown("#### Hide Template Sections")
+                st.markdown("#### Hide Template Section Contents")
 
                 section_options = [sec["id"] for sec in st.session_state["template_sections"]]
                 section_name_map = {
@@ -1042,7 +1095,7 @@ with st.sidebar:
                 }
 
                 st.multiselect(
-                    "Hide these uploaded template sections",
+                    "Hide contents under these section headers",
                     options=section_options,
                     default=st.session_state.get("hidden_section_ids", []),
                     format_func=lambda sid: section_name_map[sid],
@@ -1051,14 +1104,14 @@ with st.sidebar:
 
                 for sec in st.session_state["template_sections"]:
                     hidden = sec["id"] in st.session_state["hidden_section_ids"]
-                    status = "hidden" if hidden else "shown"
+                    status = "content hidden" if hidden else "content shown"
                     st.caption(
-                        f'{sec["title"]}: {len(sec["content_slide_indices"])} content slide(s) · {status}'
+                        f'{sec["title"]}: {len(sec["content_slide_indices"])} content slide(s) · divider kept · {status}'
                     )
             elif selected_template_ok:
                 st.info(
                     f'No "{DIVIDER_LAYOUT_NAME}" slides detected. '
-                    "Section hiding will not be available."
+                    "Section content hiding will not be available."
                 )
         else:
             st.info("Upload at least one template.")
@@ -1545,6 +1598,11 @@ with main_right:
 
     else:
         st.caption("Full service deck preview")
+
+        if st.session_state.get("service_output_mode") == "songs":
+            st.caption("Output mode: songs only (for checking)")
+        else:
+            st.caption("Output mode: full deck with template kept and songs appended at end")
 
         can_generate = (
             selected_template_bytes is not None
