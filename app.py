@@ -1,5 +1,3 @@
-
-
 import os
 import io
 import base64
@@ -18,7 +16,6 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
 
-fitz.TOOLS.mupdf_display_errors(False)
 
 # =========================================================
 # CONFIG
@@ -810,39 +807,29 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         try:
             doc = fitz.open(pdf_path)
-
-            # Clean / repair the PDF in memory if MuPDF can recover it.
             repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
             doc.close()
-
             doc = fitz.open(stream=repaired_bytes, filetype="pdf")
-
         except Exception as e:
             raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
 
         images = []
         try:
             for page in doc:
-                pix = page.get_pixmap(dpi=100)
-                mode = "RGB" if pix.alpha == 0 else "RGBA"
-                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-
-                if mode == "RGBA":
-                    img = img.convert("RGB")
-
-                img = img.resize(
-                    (int(pix.width * 0.7), int(pix.height * 0.7)),
-                    Image.LANCZOS,
-                )
+                pix = page.get_pixmap(dpi=72, alpha=False)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
+                img.save(buffer, format="JPEG", quality=60, optimize=True)
                 images.append(buffer.getvalue())
+
+                del pix
+                del img
+                del buffer
         finally:
             doc.close()
 
         return images
-    
 
 
 def preview_error_message(exc: Exception) -> str:
@@ -856,6 +843,7 @@ def preview_error_message(exc: Exception) -> str:
         return "Preview generation failed because the generated PDF structure is malformed. The app tried to repair it, but PyMuPDF still could not render it."
 
     return f"Preview generation failed: {msg}"
+
 
 def render_scrollable_images(images, height=760, active_slide=None):
     if not images:
@@ -1057,7 +1045,7 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
     slide_counter = 1
 
     for sec in sections:
-        slide_counter += 1  # divider
+        slide_counter += 1
         if sec["id"] not in hidden_ids:
             slide_counter += len(sec.get("content_slide_indices", []))
 
@@ -1073,6 +1061,7 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
 
 def refresh_service_preview(setlist, template_bytes):
+    st.session_state["service_preview_images"] = None
     ppt_data = create_combined_ppt(setlist, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
 
@@ -1372,44 +1361,44 @@ with st.sidebar:
                 else:
                     labels.append(f'{i+1}. {song["title"]}{section_suffix} ({len(song["slides"])})')
 
-                st.session_state["setlist_selected_index"] = min(
-                    st.session_state.get("setlist_selected_index", 0),
-                    len(labels) - 1,
-                )
-                
-                pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-                
-                if pending_index is None:
-                    pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
-                
-                try:
-                    pending_index = int(pending_index)
-                except Exception:
-                    pending_index = 0
-                
-                pending_index = max(0, min(pending_index, len(labels) - 1))
-                
-                st.session_state["setlist_selectbox_sidebar"] = pending_index
-                st.session_state["setlist_selected_index"] = pending_index
-                
-                previous_selected_index = st.session_state["setlist_selected_index"]
-                
-                selected_index = st.selectbox(
-                    "Selected song",
-                    options=list(range(len(labels))),
-                    format_func=lambda i: labels[i],
-                    key="setlist_selectbox_sidebar",
-                )
-                
-                try:
-                    selected_index = int(selected_index)
-                except Exception:
-                    selected_index = 0
-                
-                selected_index = max(0, min(selected_index, len(labels) - 1))
-                
-                st.session_state["setlist_selected_index"] = selected_index
-                st.session_state["setlist_selectbox_sidebar"] = selected_index
+            st.session_state["setlist_selected_index"] = min(
+                st.session_state.get("setlist_selected_index", 0),
+                len(labels) - 1,
+            )
+
+            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
+
+            if pending_index is None:
+                pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
+
+            try:
+                pending_index = int(pending_index)
+            except Exception:
+                pending_index = 0
+
+            pending_index = max(0, min(pending_index, len(labels) - 1))
+
+            st.session_state["setlist_selectbox_sidebar"] = pending_index
+            st.session_state["setlist_selected_index"] = pending_index
+
+            previous_selected_index = st.session_state["setlist_selected_index"]
+
+            selected_index = st.selectbox(
+                "Selected song",
+                options=list(range(len(labels))),
+                format_func=lambda i: labels[i],
+                key="setlist_selectbox_sidebar",
+            )
+
+            try:
+                selected_index = int(selected_index)
+            except Exception:
+                selected_index = 0
+
+            selected_index = max(0, min(selected_index, len(labels) - 1))
+
+            st.session_state["setlist_selected_index"] = selected_index
+            st.session_state["setlist_selectbox_sidebar"] = selected_index
 
             if (
                 selected_index != previous_selected_index
@@ -1513,7 +1502,7 @@ with st.sidebar:
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
-                st.session_state["pending_setlist_selectbox_index"] = 0
+                st.session_state["pending_setlist_selectbox_index"] = None
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 clear_service_outputs()
@@ -1615,6 +1604,7 @@ with main_left:
         else:
             try:
                 st.session_state["preview_mode"] = "song"
+                st.session_state["current_song_preview_images"] = None
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
@@ -1672,28 +1662,8 @@ with main_left:
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
 
-    should_refresh_preview = (
-        (
-            text_changed and (
-                (st.session_state["refresh_on_new_line"] and trigger_refresh)
-                or (not st.session_state["refresh_on_new_line"])
-            )
-        )
-        or split_settings_changed
-    ) and (
-        selected_template_bytes is not None
-        and selected_template_ok
-        and soffice_available()
-        and bool(current_slides)
-        and new_signature != st.session_state.get("last_current_song_signature")
-    )
-
-    if should_refresh_preview:
-        try:
-            refresh_current_song_preview(song_item, selected_template_bytes)
-            st.session_state["editor_status_message"] = "Song preview auto-refreshed."
-        except Exception as e:
-            st.session_state["editor_status_message"] = preview_error_message(e)
+    # Auto preview disabled to reduce memory usage on Streamlit Cloud.
+    should_refresh_preview = False
 
     st.session_state["last_editor_text"] = editor_text
     st.session_state["last_split_settings"] = current_split_settings
@@ -1784,6 +1754,7 @@ with main_left:
                     and current_slides
                 ):
                     try:
+                        st.session_state["current_song_preview_images"] = None
                         refresh_current_song_preview(item, selected_template_bytes)
                         st.session_state["current_preview_slide"] = 1
                         st.session_state["preview_mode"] = "song"
@@ -1845,12 +1816,7 @@ with main_right:
                 use_container_width=True
             )
 
-            need_refresh = (
-                refresh_service_now
-                or st.session_state.get("service_preview_images") is None
-                or st.session_state.get("ppt_data") is None
-                or not st.session_state.get("service_song_start_slides")
-            )
+            need_refresh = refresh_service_now
 
             if need_refresh:
                 try:
