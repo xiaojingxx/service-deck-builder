@@ -108,12 +108,18 @@ for key, value in DEFAULTS.items():
 
 
 # =========================================================
-# HELPERS
+# BASIC HELPERS
 # =========================================================
 def soffice_available() -> bool:
     if SOFFICE_PATH == "soffice":
         return which("soffice") is not None
     return os.path.exists(SOFFICE_PATH)
+
+
+def clear_service_outputs():
+    st.session_state["ppt_data"] = None
+    st.session_state["service_preview_images"] = None
+    st.session_state["service_song_start_slides"] = []
 
 
 def find_row_by_umh(umh_number: str):
@@ -252,6 +258,24 @@ def delete_slide_by_index(prs, slide_index: int):
     del prs.slides._sldIdLst[slide_index]
 
 
+# =========================================================
+# EXPERIMENTAL MOVE HELPERS
+# =========================================================
+def move_slide(prs, from_idx: int, to_idx: int):
+    sldIdLst = prs.slides._sldIdLst
+    slide = sldIdLst[from_idx]
+    del sldIdLst[from_idx]
+    sldIdLst.insert(to_idx, slide)
+
+
+def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
+    for idx in range(end_idx, start_idx - 1, -1):
+        move_slide(prs, idx, target_idx)
+
+
+# =========================================================
+# TEMPLATE / SECTION HELPERS
+# =========================================================
 def get_slide_layout_name(slide):
     try:
         return slide.slide_layout.name.strip()
@@ -308,6 +332,35 @@ def get_section_title_by_id(section_id):
     return None
 
 
+def get_current_divider_indices_and_titles(prs):
+    result = []
+    for i, slide in enumerate(prs.slides):
+        if is_divider_slide(slide):
+            result.append((i, get_divider_title(slide)))
+    return result
+
+
+def find_section_insert_index(prs, section_title: str):
+    divider_positions = get_current_divider_indices_and_titles(prs)
+
+    match_index = None
+    for idx, (_, title) in enumerate(divider_positions):
+        if title == section_title:
+            match_index = idx
+            break
+
+    if match_index is None:
+        return len(prs.slides)
+
+    divider_slide_index = divider_positions[match_index][0]
+
+    if match_index + 1 < len(divider_positions):
+        next_divider_index = divider_positions[match_index + 1][0]
+        return next_divider_index
+
+    return len(prs.slides)
+
+
 def validate_template_bytes(template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
@@ -342,6 +395,9 @@ def validate_template_bytes(template_bytes: bytes):
     return len(errors) == 0, errors, warnings
 
 
+# =========================================================
+# SONG / SECTION HELPERS
+# =========================================================
 def build_editor_song_item(current_slides):
     return {
         "umh_number": st.session_state["editor_umh"].strip(),
@@ -377,273 +433,24 @@ def build_current_song_signature(song_item, selected_template_name):
     )
 
 
-def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
-    for song in setlist:
-        umh_number = str(song["umh_number"]).strip()
-        title = str(song["title"]).strip()
-        slides = song["slides"]
-
-        lyrics_font_size_pt = song.get("lyrics_font_size_pt")
-        line_spacing = song.get("line_spacing")
-
-        full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
-
-        for i, slide_lines in enumerate(slides):
-            lyrics_text = "\n".join(slide_lines)
-
-            if i == 0:
-                slide = prs.slides.add_slide(first_layout)
-                set_shape_text(
-                    slide.shapes.title,
-                    full_title,
-                    font_size_pt=None,
-                    line_spacing=None,
-                )
-                set_shape_text(
-                    get_body_placeholder(slide),
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-            else:
-                slide = prs.slides.add_slide(rest_layout)
-                set_shape_text(
-                    get_body_placeholder(slide),
-                    lyrics_text,
-                    font_size_pt=lyrics_font_size_pt,
-                    line_spacing=line_spacing,
-                )
-
-
 def get_ordered_songs_for_output(setlist):
     sections = st.session_state.get("template_sections", [])
     songs_by_section = {sec["id"]: [] for sec in sections}
     unassigned_songs = []
 
-    for song in setlist:
+    for idx, song in enumerate(setlist):
         sec_id = song.get("section_id")
         if sec_id in songs_by_section:
-            songs_by_section[sec_id].append(song)
+            songs_by_section[sec_id].append((idx, song))
         else:
-            unassigned_songs.append(song)
+            unassigned_songs.append((idx, song))
 
-    ordered_songs = []
+    ordered = []
     for sec in sections:
-        ordered_songs.extend(songs_by_section.get(sec["id"], []))
-    ordered_songs.extend(unassigned_songs)
+        ordered.extend(songs_by_section.get(sec["id"], []))
+    ordered.extend(unassigned_songs)
 
-    return ordered_songs
-
-
-def create_combined_ppt(setlist, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
-
-    output_mode = st.session_state.get("service_output_mode", "full")
-
-    # Songs-only checking deck
-    if output_mode == "songs":
-        delete_all_slides(prs)
-        ordered_songs = get_ordered_songs_for_output(setlist)
-        add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
-
-        output = BytesIO()
-        prs.save(output)
-        output.seek(0)
-        return output
-
-    # Full deck mode
-    if not st.session_state.get("preserve_template_slides", True):
-        delete_all_slides(prs)
-        ordered_songs = get_ordered_songs_for_output(setlist)
-        add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
-
-        output = BytesIO()
-        prs.save(output)
-        output.seek(0)
-        return output
-
-    # Hide selected template section contents, keep dividers
-    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-    sections = st.session_state.get("template_sections", [])
-
-    slides_to_delete = []
-    for sec in sections:
-        if sec["id"] in hidden_ids:
-            slides_to_delete.extend(sec.get("content_slide_indices", []))
-
-    for idx in sorted(set(slides_to_delete), reverse=True):
-        delete_slide_by_index(prs, idx)
-
-    ordered_songs = get_ordered_songs_for_output(setlist)
-    add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
-
-    output = BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output
-
-
-def create_single_song_ppt(song_item, template_bytes: bytes):
-    prs = open_presentation_from_bytes(template_bytes)
-
-    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
-    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
-
-    if first_layout is None or rest_layout is None:
-        raise ValueError("Template layouts not found.")
-
-    delete_all_slides(prs)
-
-    umh_number = str(song_item["umh_number"]).strip()
-    title = str(song_item["title"]).strip()
-    slides = song_item["slides"]
-
-    lyrics_font_size_pt = song_item.get("lyrics_font_size_pt")
-    line_spacing = song_item.get("line_spacing")
-
-    full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
-
-    for i, slide_lines in enumerate(slides):
-        lyrics_text = "\n".join(slide_lines)
-
-        if i == 0:
-            slide = prs.slides.add_slide(first_layout)
-            set_shape_text(slide.shapes.title, full_title)
-            set_shape_text(
-                get_body_placeholder(slide),
-                lyrics_text,
-                font_size_pt=lyrics_font_size_pt,
-                line_spacing=line_spacing,
-            )
-        else:
-            slide = prs.slides.add_slide(rest_layout)
-            set_shape_text(
-                get_body_placeholder(slide),
-                lyrics_text,
-                font_size_pt=lyrics_font_size_pt,
-                line_spacing=line_spacing,
-            )
-
-    output = BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output
-
-
-def pptx_to_preview_images(pptx_bytes: BytesIO):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pptx_path = os.path.join(tmpdir, "preview.pptx")
-
-        with open(pptx_path, "wb") as f:
-            f.write(pptx_bytes.getvalue())
-
-        cmd = [
-            SOFFICE_PATH,
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", tmpdir,
-            pptx_path,
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(f"LibreOffice conversion failed:\n{result.stderr}")
-
-        pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
-        if not pdf_files:
-            raise FileNotFoundError(
-                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
-            )
-
-        pdf_path = os.path.join(tmpdir, pdf_files[0])
-        doc = fitz.open(pdf_path)
-
-        images = []
-        for page in doc:
-            pix = page.get_pixmap(dpi=100)
-            mode = "RGB" if pix.alpha == 0 else "RGBA"
-            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-
-            if mode == "RGBA":
-                img = img.convert("RGB")
-
-            img = img.resize(
-                (int(pix.width * 0.7), int(pix.height * 0.7)),
-                Image.LANCZOS,
-            )
-
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=70, optimize=True)
-            images.append(buffer.getvalue())
-
-        doc.close()
-        return images
-
-
-def render_scrollable_images(images, height=760, active_slide=None):
-    if not images:
-        st.info("Preview will appear here.")
-        return
-
-    container_id = f"preview-scroll-container-{len(images)}-{active_slide}"
-    active_slide_js = "null" if active_slide is None else str(active_slide)
-
-    html = f"""
-    <div id="{container_id}" style="
-        height: {height}px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        padding: 12px;
-        border-radius: 8px;
-        background: #fafafa;
-        box-sizing: border-box;
-        scroll-behavior: smooth;
-    ">
-    """
-
-    for i, img_bytes in enumerate(images, start=1):
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " ← current" if active_slide == i else ""
-
-        html += f"""
-        <div id="slide-{i}" style="margin-bottom: 24px;">
-            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
-            <img
-                src="data:image/jpeg;base64,{b64}"
-                style="width: 100%; border: {border}; display: block;"
-            />
-        </div>
-        """
-
-    html += "</div>"
-
-    html += f"""
-    <script>
-    const container = document.getElementById("{container_id}");
-    const activeSlide = {active_slide_js};
-
-    function scrollToActiveSlide() {{
-        if (!container || activeSlide === null) return;
-        const target = document.getElementById("slide-" + activeSlide);
-        if (!target) return;
-        container.scrollTop = target.offsetTop - 12;
-    }}
-
-    setTimeout(() => {{
-        scrollToActiveSlide();
-    }}, 200);
-    </script>
-    """
-
-    st.components.v1.html(html, height=height, scrolling=False)
+    return ordered  # list of (original_index, song)
 
 
 def reset_editor():
@@ -663,17 +470,6 @@ def reset_editor():
     st.session_state["current_preview_slide"] = 1
     st.session_state["editor_ace_key"] += 1
     st.session_state["selected_song_section_id"] = None
-
-
-def refresh_current_song_preview(song_item, template_bytes):
-    ppt_data = create_single_song_ppt(song_item, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
-
-    st.session_state["current_song_preview_images"] = preview_images
-    st.session_state["last_current_song_signature"] = build_current_song_signature(
-        song_item,
-        st.session_state.get("selected_template_name"),
-    )
 
 
 def load_song_into_editor(match):
@@ -822,6 +618,259 @@ def apply_pending_setlist_load():
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 
+# =========================================================
+# PPT BUILD HELPERS
+# =========================================================
+def add_song_block_to_prs(prs, song, first_layout, rest_layout):
+    start_idx = len(prs.slides)
+
+    umh_number = str(song["umh_number"]).strip()
+    title = str(song["title"]).strip()
+    slides = song["slides"]
+
+    lyrics_font_size_pt = song.get("lyrics_font_size_pt")
+    line_spacing = song.get("line_spacing")
+
+    full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
+
+    for i, slide_lines in enumerate(slides):
+        lyrics_text = "\n".join(slide_lines)
+
+        if i == 0:
+            slide = prs.slides.add_slide(first_layout)
+            set_shape_text(
+                slide.shapes.title,
+                full_title,
+                font_size_pt=None,
+                line_spacing=None,
+            )
+            set_shape_text(
+                get_body_placeholder(slide),
+                lyrics_text,
+                font_size_pt=lyrics_font_size_pt,
+                line_spacing=line_spacing,
+            )
+        else:
+            slide = prs.slides.add_slide(rest_layout)
+            set_shape_text(
+                get_body_placeholder(slide),
+                lyrics_text,
+                font_size_pt=lyrics_font_size_pt,
+                line_spacing=line_spacing,
+            )
+
+    end_idx = len(prs.slides) - 1
+    return start_idx, end_idx
+
+
+def create_combined_ppt(setlist, template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    output_mode = st.session_state.get("service_output_mode", "full")
+    ordered_songs = get_ordered_songs_for_output(setlist)
+
+    # Songs-only checking deck
+    if output_mode == "songs":
+        delete_all_slides(prs)
+        for _, song in ordered_songs:
+            add_song_block_to_prs(prs, song, first_layout, rest_layout)
+
+        output = BytesIO()
+        prs.save(output)
+        output.seek(0)
+        return output
+
+    # Full deck mode
+    if not st.session_state.get("preserve_template_slides", True):
+        delete_all_slides(prs)
+        for _, song in ordered_songs:
+            add_song_block_to_prs(prs, song, first_layout, rest_layout)
+
+        output = BytesIO()
+        prs.save(output)
+        output.seek(0)
+        return output
+
+    # Hide selected section contents, but keep divider/header slides
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    sections = st.session_state.get("template_sections", [])
+
+    slides_to_delete = []
+    for sec in sections:
+        if sec["id"] in hidden_ids:
+            slides_to_delete.extend(sec.get("content_slide_indices", []))
+
+    for idx in sorted(set(slides_to_delete), reverse=True):
+        delete_slide_by_index(prs, idx)
+
+    # Insert each song block into its chosen section using _sldIdLst.insert()
+    for _, song in ordered_songs:
+        section_title = get_section_title_by_id(song.get("section_id"))
+        target_idx = find_section_insert_index(prs, section_title) if section_title else len(prs.slides)
+        start_idx, end_idx = add_song_block_to_prs(prs, song, first_layout, rest_layout)
+        move_slide_block(prs, start_idx, end_idx, target_idx)
+
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
+
+def create_single_song_ppt(song_item, template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    delete_all_slides(prs)
+    add_song_block_to_prs(prs, song_item, first_layout, rest_layout)
+
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
+
+# =========================================================
+# PREVIEW HELPERS
+# =========================================================
+def pptx_to_preview_images(pptx_bytes: BytesIO):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pptx_path = os.path.join(tmpdir, "preview.pptx")
+
+        with open(pptx_path, "wb") as f:
+            f.write(pptx_bytes.getvalue())
+
+        cmd = [
+            SOFFICE_PATH,
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", tmpdir,
+            pptx_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "LibreOffice conversion failed.\n\n"
+                f"stdout:\n{result.stdout}\n\n"
+                f"stderr:\n{result.stderr}"
+            )
+
+        pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
+        if not pdf_files:
+            raise FileNotFoundError(
+                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
+            )
+
+        pdf_path = os.path.join(tmpdir, pdf_files[0])
+        doc = fitz.open(pdf_path)
+
+        images = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=100)
+            mode = "RGB" if pix.alpha == 0 else "RGBA"
+            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+
+            if mode == "RGBA":
+                img = img.convert("RGB")
+
+            img = img.resize(
+                (int(pix.width * 0.7), int(pix.height * 0.7)),
+                Image.LANCZOS,
+            )
+
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=70, optimize=True)
+            images.append(buffer.getvalue())
+
+        doc.close()
+        return images
+
+
+def render_scrollable_images(images, height=760, active_slide=None):
+    if not images:
+        st.info("Preview will appear here.")
+        return
+
+    container_id = f"preview-scroll-container-{len(images)}-{active_slide}"
+    active_slide_js = "null" if active_slide is None else str(active_slide)
+
+    html = f"""
+    <div id="{container_id}" style="
+        height: {height}px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 12px;
+        border-radius: 8px;
+        background: #fafafa;
+        box-sizing: border-box;
+        scroll-behavior: smooth;
+    ">
+    """
+
+    for i, img_bytes in enumerate(images, start=1):
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
+        badge = " ← current" if active_slide == i else ""
+
+        html += f"""
+        <div id="slide-{i}" style="margin-bottom: 24px;">
+            <div style="font-weight: 600; margin-bottom: 8px;">Slide {i}{badge}</div>
+            <img
+                src="data:image/jpeg;base64,{b64}"
+                style="width: 100%; border: {border}; display: block;"
+            />
+        </div>
+        """
+
+    html += "</div>"
+
+    html += f"""
+    <script>
+    const container = document.getElementById("{container_id}");
+    const activeSlide = {active_slide_js};
+
+    function scrollToActiveSlide() {{
+        if (!container || activeSlide === null) return;
+        const target = document.getElementById("slide-" + activeSlide);
+        if (!target) return;
+        container.scrollTop = target.offsetTop - 12;
+    }}
+
+    setTimeout(() => {{
+        scrollToActiveSlide();
+    }}, 200);
+    </script>
+    """
+
+    st.components.v1.html(html, height=height, scrolling=False)
+
+
+# =========================================================
+# AUTO PREVIEW HELPERS
+# =========================================================
+def refresh_current_song_preview(song_item, template_bytes):
+    ppt_data = create_single_song_ppt(song_item, template_bytes)
+    preview_images = pptx_to_preview_images(ppt_data)
+
+    st.session_state["current_song_preview_images"] = preview_images
+    st.session_state["last_current_song_signature"] = build_current_song_signature(
+        song_item,
+        st.session_state.get("selected_template_name"),
+    )
+
+
 def blank_separator_added(old_text: str, new_text: str) -> bool:
     def valid_blank_positions(lines):
         positions = []
@@ -925,35 +974,46 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
     return None
 
 
-def get_retained_template_slide_count(template_bytes: bytes):
-    if (
-        st.session_state.get("service_output_mode") == "songs"
-        or not st.session_state.get("preserve_template_slides", True)
-    ):
-        return 0
-
-    prs = open_presentation_from_bytes(template_bytes)
-    total = len(prs.slides)
-
-    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-    sections = st.session_state.get("template_sections", [])
-
-    deleted_content = 0
-    for sec in sections:
-        if sec["id"] in hidden_ids:
-            deleted_content += len(sec.get("content_slide_indices", []))
-
-    return max(0, total - deleted_content)
-
-
+# =========================================================
+# SERVICE PREVIEW POSITION HELPERS
+# =========================================================
 def get_service_song_start_slides(setlist, template_bytes: bytes):
-    starts = []
-    base = get_retained_template_slide_count(template_bytes) if st.session_state.get("service_output_mode") == "full" else 0
-    slide_counter = base + 1
+    starts = [None] * len(setlist)
 
-    ordered_songs = get_ordered_songs_for_output(setlist)
-    for song in ordered_songs:
-        starts.append(slide_counter)
+    if st.session_state.get("service_output_mode") == "songs" or not st.session_state.get("preserve_template_slides", True):
+        slide_counter = 1
+        ordered = get_ordered_songs_for_output(setlist)
+        for original_idx, song in ordered:
+            starts[original_idx] = slide_counter
+            slide_counter += len(song["slides"])
+        return starts
+
+    sections = st.session_state.get("template_sections", [])
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+
+    slide_counter = 1
+    ordered = get_ordered_songs_for_output(setlist)
+    songs_by_section = {}
+    unassigned = []
+
+    for original_idx, song in ordered:
+        sec_id = song.get("section_id")
+        if sec_id is None:
+            unassigned.append((original_idx, song))
+        else:
+            songs_by_section.setdefault(sec_id, []).append((original_idx, song))
+
+    for sec in sections:
+        slide_counter += 1  # divider kept
+        if sec["id"] not in hidden_ids:
+            slide_counter += len(sec.get("content_slide_indices", []))
+
+        for original_idx, song in songs_by_section.get(sec["id"], []):
+            starts[original_idx] = slide_counter
+            slide_counter += len(song["slides"])
+
+    for original_idx, song in unassigned:
+        starts[original_idx] = slide_counter
         slide_counter += len(song["slides"])
 
     return starts
@@ -971,12 +1031,6 @@ def refresh_service_preview(setlist, template_bytes):
     st.session_state["service_song_start_slides"] = get_service_song_start_slides(
         setlist, template_bytes
     )
-
-
-def clear_service_outputs():
-    st.session_state["ppt_data"] = None
-    st.session_state["service_preview_images"] = None
-    st.session_state["service_song_start_slides"] = []
 
 
 def selected_template_info():
@@ -1006,11 +1060,28 @@ selected_template_bytes, selected_template_ok, selected_template_errors, selecte
 
 if selected_template_bytes and selected_template_ok:
     try:
-        st.session_state["template_sections"] = parse_template_sections(selected_template_bytes)
+        current_sections = parse_template_sections(selected_template_bytes)
+        old_sections = st.session_state.get("template_sections", [])
+
+        old_hidden_by_title = {
+            sec["title"]: (sec["id"] in st.session_state.get("hidden_section_ids", []))
+            for sec in old_sections
+        }
+
+        st.session_state["template_sections"] = current_sections
+
+        new_hidden_ids = []
+        for sec in current_sections:
+            if old_hidden_by_title.get(sec["title"], False):
+                new_hidden_ids.append(sec["id"])
+        st.session_state["hidden_section_ids"] = new_hidden_ids
+
     except Exception:
         st.session_state["template_sections"] = []
+        st.session_state["hidden_section_ids"] = []
 else:
     st.session_state["template_sections"] = []
+    st.session_state["hidden_section_ids"] = []
 
 if st.session_state.get("template_sections"):
     valid_section_ids = {sec["id"] for sec in st.session_state["template_sections"]}
@@ -1139,6 +1210,7 @@ with st.sidebar:
                 del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
                 st.session_state["selected_template_name"] = None
                 st.session_state["template_sections"] = []
+                st.session_state["hidden_section_ids"] = []
                 st.session_state["selected_song_section_id"] = None
                 clear_service_outputs()
                 st.rerun()
@@ -1153,7 +1225,7 @@ with st.sidebar:
                 "Service output mode",
                 options=["full", "songs"],
                 format_func=lambda x: (
-                    "Full deck (template kept, songs appended at end)"
+                    "Full deck (insert songs into selected sections)"
                     if x == "full"
                     else "Songs only (for checking)"
                 ),
@@ -1186,7 +1258,7 @@ with st.sidebar:
             elif selected_template_ok:
                 st.info(
                     f'No "{DIVIDER_LAYOUT_NAME}" slides detected. '
-                    "Section content hiding will not be available."
+                    "Section tools will not be available."
                 )
         else:
             st.info("Upload at least one template.")
@@ -1694,7 +1766,7 @@ with main_right:
         if st.session_state.get("service_output_mode") == "songs":
             st.caption("Output mode: songs only (for checking)")
         else:
-            st.caption("Output mode: full deck with template kept and songs appended at end")
+            st.caption("Output mode: full deck with songs inserted into selected sections")
 
         can_generate = (
             selected_template_bytes is not None
@@ -1728,7 +1800,7 @@ with main_right:
             starts = st.session_state.get("service_song_start_slides", [])
             selected_index = st.session_state.get("setlist_selected_index", 0)
 
-            if starts and 0 <= selected_index < len(starts):
+            if starts and 0 <= selected_index < len(starts) and starts[selected_index] is not None:
                 st.session_state["current_preview_slide"] = starts[selected_index]
             else:
                 st.session_state["current_preview_slide"] = 1
