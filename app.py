@@ -263,14 +263,50 @@ def delete_slide_by_index(prs, slide_index: int):
 # =========================================================
 def move_slide(prs, from_idx: int, to_idx: int):
     sldIdLst = prs.slides._sldIdLst
-    slide = sldIdLst[from_idx]
+
+    if from_idx == to_idx:
+        return
+
+    slide_id = sldIdLst[from_idx]
     del sldIdLst[from_idx]
-    sldIdLst.insert(to_idx, slide)
+
+    # after removing the source slide, indexes shift
+    if to_idx > from_idx:
+        to_idx -= 1
+
+    sldIdLst.insert(to_idx, slide_id)
 
 
 def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
-    for idx in range(end_idx, start_idx - 1, -1):
-        move_slide(prs, idx, target_idx)
+    """
+    Move a contiguous block of slides [start_idx, end_idx] so that the block
+    starts at target_idx, preserving the original order of the block.
+    """
+    sldIdLst = prs.slides._sldIdLst
+
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+
+    block_len = end_idx - start_idx + 1
+
+    # no-op if the block is already there, or target falls inside the block
+    if target_idx >= start_idx and target_idx <= end_idx + 1:
+        return
+
+    # capture the block first
+    block = [sldIdLst[i] for i in range(start_idx, end_idx + 1)]
+
+    # remove the block
+    for _ in range(block_len):
+        del sldIdLst[start_idx]
+
+    # if target was after the original block, adjust after removal
+    if target_idx > end_idx:
+        target_idx -= block_len
+
+    # insert back in the same order
+    for offset, slide_id in enumerate(block):
+        sldIdLst.insert(target_idx + offset, slide_id)
 
 
 # =========================================================
