@@ -91,7 +91,9 @@ DEFAULTS = {
     "current_preview_slide": 1,
     "preview_mode": "song",
     "current_song_preview_images": None,
+    "current_song_preview_stats": None,
     "service_preview_images": None,
+    "service_preview_stats": None,
     "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
@@ -121,7 +123,36 @@ def soffice_available() -> bool:
 def clear_service_outputs():
     st.session_state["ppt_data"] = None
     st.session_state["service_preview_images"] = None
+    st.session_state["service_preview_stats"] = None
     st.session_state["service_song_start_slides"] = []
+
+
+def format_bytes(num_bytes: int) -> str:
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024**2:
+        return f"{num_bytes / 1024:.1f} KB"
+    return f"{num_bytes / (1024**2):.2f} MB"
+
+
+def preview_stats(images):
+    if not images:
+        return {
+            "count": 0,
+            "total_bytes": 0,
+            "avg_bytes": 0,
+            "max_bytes": 0,
+        }
+
+    sizes = [len(img) for img in images]
+    total = sum(sizes)
+
+    return {
+        "count": len(images),
+        "total_bytes": total,
+        "avg_bytes": total // len(images),
+        "max_bytes": max(sizes),
+    }
 
 
 def find_row_by_umh(umh_number: str):
@@ -516,6 +547,7 @@ def reset_editor():
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
     st.session_state["current_song_preview_images"] = None
+    st.session_state["current_song_preview_stats"] = None
     st.session_state["last_editor_text"] = ""
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
@@ -580,6 +612,7 @@ def load_song_into_editor(match):
     st.session_state["selected_song_section_id"] = sections[0]["id"] if sections else None
 
     st.session_state["current_song_preview_images"] = None
+    st.session_state["current_song_preview_stats"] = None
     st.session_state["last_editor_text"] = lyrics_raw
     st.session_state["last_current_song_signature"] = None
     st.session_state["editor_status_message"] = ""
@@ -630,6 +663,7 @@ def apply_pending_setlist_load():
         st.session_state["selected_song_section_id"] = st.session_state["template_sections"][0]["id"]
 
     st.session_state["current_song_preview_images"] = None
+    st.session_state["current_song_preview_stats"] = None
     st.session_state["pending_setlist_load"] = None
     st.session_state["last_editor_text"] = lyrics_text
     st.session_state["last_current_song_signature"] = None
@@ -920,11 +954,13 @@ def render_scrollable_images(images, height=760, active_slide=None):
 # =========================================================
 def refresh_current_song_preview(song_item, template_bytes):
     st.session_state["current_song_preview_images"] = None
+    st.session_state["current_song_preview_stats"] = None
 
     ppt_data = create_single_song_ppt(song_item, template_bytes)
     preview_images = pptx_to_preview_images(ppt_data)
 
     st.session_state["current_song_preview_images"] = preview_images
+    st.session_state["current_song_preview_stats"] = preview_stats(preview_images)
     st.session_state["last_current_song_signature"] = build_current_song_signature(
         song_item,
         st.session_state.get("selected_template_name"),
@@ -1075,6 +1111,7 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
 def refresh_service_preview(setlist, template_bytes):
     st.session_state["service_preview_images"] = None
+    st.session_state["service_preview_stats"] = None
     st.session_state["ppt_data"] = None
 
     ppt_data = create_combined_ppt(setlist, template_bytes)
@@ -1085,6 +1122,7 @@ def refresh_service_preview(setlist, template_bytes):
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
+    st.session_state["service_preview_stats"] = preview_stats(preview_images)
     st.session_state["service_song_start_slides"] = get_service_song_start_slides(
         setlist, template_bytes
     )
@@ -1245,6 +1283,7 @@ with st.sidebar:
                 st.session_state["selected_template_name"] = chosen_template
                 clear_service_outputs()
                 st.session_state["current_song_preview_images"] = None
+                st.session_state["current_song_preview_stats"] = None
                 st.session_state["last_current_song_signature"] = None
                 st.rerun()
             else:
@@ -1431,6 +1470,7 @@ with st.sidebar:
                     st.session_state["pending_setlist_load"] = selected_index
                     st.session_state["preview_mode"] = "song"
                     st.session_state["current_song_preview_images"] = None
+                    st.session_state["current_song_preview_stats"] = None
                     st.session_state["last_current_song_signature"] = None
                     st.rerun()
 
@@ -1519,6 +1559,7 @@ with st.sidebar:
                 st.session_state["pending_setlist_selectbox_index"] = None
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
+                st.session_state["current_song_preview_stats"] = None
                 clear_service_outputs()
                 st.rerun()
 
@@ -1622,6 +1663,7 @@ with main_left:
             try:
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
+                st.session_state["current_song_preview_stats"] = None
                 refresh_current_song_preview(song_item, selected_template_bytes)
                 st.session_state["editor_status_message"] = "Song preview refreshed."
                 st.rerun()
@@ -1772,6 +1814,7 @@ with main_left:
                 ):
                     try:
                         st.session_state["current_song_preview_images"] = None
+                        st.session_state["current_song_preview_stats"] = None
                         refresh_current_song_preview(item, selected_template_bytes)
                         st.session_state["current_preview_slide"] = 1
                         st.session_state["preview_mode"] = "song"
@@ -1802,8 +1845,10 @@ with main_right:
 
     if st.session_state["preview_mode"] == "song":
         st.session_state["service_preview_images"] = None
+        st.session_state["service_preview_stats"] = None
     else:
         st.session_state["current_song_preview_images"] = None
+        st.session_state["current_song_preview_stats"] = None
 
     preview_images = None
 
@@ -1818,6 +1863,15 @@ with main_right:
             st.warning("LibreOffice/soffice is required for preview.")
 
         preview_images = st.session_state.get("current_song_preview_images")
+
+        song_stats = st.session_state.get("current_song_preview_stats")
+        if song_stats:
+            st.caption(
+                f'Preview: {song_stats["count"]} slide(s) · '
+                f'total {format_bytes(song_stats["total_bytes"])} · '
+                f'avg {format_bytes(song_stats["avg_bytes"])} · '
+                f'max {format_bytes(song_stats["max_bytes"])}'
+            )
 
     else:
         if st.session_state.get("service_output_mode") == "songs":
@@ -1858,6 +1912,15 @@ with main_right:
                 st.session_state["current_preview_slide"] = 1
 
             preview_images = st.session_state.get("service_preview_images")
+
+            service_stats = st.session_state.get("service_preview_stats")
+            if service_stats:
+                st.caption(
+                    f'Preview: {service_stats["count"]} slide(s) · '
+                    f'total {format_bytes(service_stats["total_bytes"])} · '
+                    f'avg {format_bytes(service_stats["avg_bytes"])} · '
+                    f'max {format_bytes(service_stats["max_bytes"])}'
+                )
 
             if st.session_state.get("ppt_data") is not None:
                 st.download_button(
