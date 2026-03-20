@@ -94,10 +94,11 @@ DEFAULTS = {
     "service_sections": [],
     "selected_section_id": None,
     "selected_section_dropdown": None,
-    "editing_song_location": None,   # {"section_id": "...", "song_index": 0}
+    "editing_song_location": None,
     "editor_target_section_id": None,
     "template_signature_for_sections": None,
     "service_section_start_slides": {},
+    "service_preview_fallback_mode": False,
 }
 
 for key, value in DEFAULTS.items():
@@ -118,6 +119,7 @@ def clear_service_outputs():
     st.session_state["ppt_data"] = None
     st.session_state["service_preview_images"] = None
     st.session_state["service_section_start_slides"] = {}
+    st.session_state["service_preview_fallback_mode"] = False
 
 
 def find_row_by_umh(umh_number: str):
@@ -345,7 +347,6 @@ def validate_template_bytes(template_bytes: bytes):
     if errors:
         return False, errors, warnings
 
-    # validate generation layouts by adding temp slides
     first_slide = prs.slides.add_slide(first_layout)
     rest_slide = prs.slides.add_slide(rest_layout)
 
@@ -583,7 +584,6 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
-    # songs only
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
 
@@ -596,7 +596,6 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # preserve template slides, safely delete hidden ones only
     slides_to_delete = []
 
     for sec in service_sections:
@@ -609,7 +608,27 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    # safest version: append generated songs at end in section order
+    for sec in service_sections:
+        for song in sec.get("songs", []):
+            add_song_to_presentation(prs, song, first_layout, rest_layout)
+
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
+
+def create_songs_only_ppt_from_sections(service_sections, template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    delete_all_slides(prs)
+
     for sec in service_sections:
         for song in sec.get("songs", []):
             add_song_to_presentation(prs, song, first_layout, rest_layout)
@@ -634,21 +653,42 @@ def get_service_section_start_slides(sections):
             if sec.get("include_template_content", True):
                 slide_counter += len(sec.get("template_slide_indices", []))
 
-        # in safe mode, songs are appended at end, so section start is template section start only
-
     return starts
 
 
 def refresh_service_preview(service_sections, template_bytes):
-    ppt_data = create_combined_ppt_from_sections(service_sections, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
+    st.session_state["service_preview_fallback_mode"] = False
 
-    if not preview_images:
-        raise RuntimeError("No preview images generated from service PPT")
+    try:
+        ppt_data = create_combined_ppt_from_sections(service_sections, template_bytes)
+        preview_images = pptx_to_preview_images(ppt_data)
 
-    st.session_state["ppt_data"] = ppt_data
-    st.session_state["service_preview_images"] = preview_images
-    st.session_state["service_section_start_slides"] = get_service_section_start_slides(service_sections)
+        if not preview_images:
+            raise RuntimeError("No preview images generated from service PPT")
+
+        st.session_state["ppt_data"] = ppt_data
+        st.session_state["service_preview_images"] = preview_images
+        st.session_state["service_section_start_slides"] = get_service_section_start_slides(service_sections)
+
+    except Exception as original_error:
+        try:
+            ppt_data = create_songs_only_ppt_from_sections(service_sections, template_bytes)
+            preview_images = pptx_to_preview_images(ppt_data)
+
+            if not preview_images:
+                raise RuntimeError("No preview images generated from fallback PPT")
+
+            st.session_state["ppt_data"] = ppt_data
+            st.session_state["service_preview_images"] = preview_images
+            st.session_state["service_section_start_slides"] = {}
+            st.session_state["service_preview_fallback_mode"] = True
+
+        except Exception as fallback_error:
+            raise RuntimeError(
+                "Combined preview failed, and fallback songs-only preview also failed.\n\n"
+                f"Combined error:\n{original_error}\n\n"
+                f"Fallback error:\n{fallback_error}"
+            )
 
 
 # =========================================================
@@ -1605,11 +1645,19 @@ with main_right:
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
 
-            section_starts = st.session_state.get("service_section_start_slides", {})
-            st.session_state["current_preview_slide"] = section_starts.get(
-                st.session_state.get("selected_section_id"),
-                1,
-            )
+            if st.session_state.get("service_preview_fallback_mode"):
+                st.warning(
+                    "Preview is showing songs-only mode because the uploaded template slides "
+                    "could not be safely rewritten for preview. This usually happens when the "
+                    "template contains complex PowerPoint objects."
+                )
+                st.session_state["current_preview_slide"] = 1
+            else:
+                section_starts = st.session_state.get("service_section_start_slides", {})
+                st.session_state["current_preview_slide"] = section_starts.get(
+                    st.session_state.get("selected_section_id"),
+                    1,
+                )
 
             preview_images = st.session_state.get("service_preview_images")
 
