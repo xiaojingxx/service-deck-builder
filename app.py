@@ -27,6 +27,7 @@ WORKSHEET_NAME = st.secrets["WORKSHEET_NAME"]
 
 FIRST_LAYOUT_NAME = "TEMPLATE_FIRST"
 REST_LAYOUT_NAME = "TEMPLATE_REST"
+DIVIDER_LAYOUT_NAME = "SECTION_DIVIDER"
 
 
 # =========================================================
@@ -96,6 +97,8 @@ DEFAULTS = {
     "ppt_data": None,
     "last_split_settings": None,
     "preserve_template_slides": True,
+    "template_sections": [],
+    "hidden_section_ids": [],
 }
 
 for key, value in DEFAULTS.items():
@@ -241,6 +244,62 @@ def delete_all_slides(prs):
         del prs.slides._sldIdLst[0]
 
 
+def delete_slide_by_index(prs, slide_index: int):
+    slide_id = prs.slides._sldIdLst[slide_index]
+    rId = slide_id.rId
+    prs.part.drop_rel(rId)
+    del prs.slides._sldIdLst[slide_index]
+
+
+def get_slide_layout_name(slide):
+    try:
+        return slide.slide_layout.name.strip()
+    except Exception:
+        return ""
+
+
+def is_divider_slide(slide):
+    return get_slide_layout_name(slide) == DIVIDER_LAYOUT_NAME
+
+
+def get_divider_title(slide, fallback="Untitled Section"):
+    if slide.shapes.title and slide.shapes.title.text.strip():
+        return slide.shapes.title.text.strip()
+
+    texts = []
+    for shape in slide.shapes:
+        if hasattr(shape, "text"):
+            text = shape.text.strip()
+            if text:
+                texts.append(text)
+
+    return texts[0] if texts else fallback
+
+
+def parse_template_sections(template_bytes: bytes):
+    prs = open_presentation_from_bytes(template_bytes)
+
+    sections = []
+    current_section = None
+    section_counter = 0
+
+    for i, slide in enumerate(prs.slides):
+        if is_divider_slide(slide):
+            current_section = {
+                "id": f"sec_{section_counter}",
+                "title": get_divider_title(slide, fallback=f"Section {section_counter + 1}"),
+                "divider_index": i,
+                "content_slide_indices": [],
+            }
+            sections.append(current_section)
+            section_counter += 1
+        else:
+            if current_section is not None:
+                current_section["content_slide_indices"].append(i)
+
+    return sections
+
+
 def validate_template_bytes(template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
@@ -319,6 +378,19 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
+    else:
+        hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+        sections = st.session_state.get("template_sections", [])
+
+        slides_to_delete = []
+        for sec in sections:
+            if sec["id"] in hidden_ids:
+                if sec.get("divider_index") is not None:
+                    slides_to_delete.append(sec["divider_index"])
+                slides_to_delete.extend(sec.get("content_slide_indices", []))
+
+        for idx in sorted(set(slides_to_delete), reverse=True):
+            delete_slide_by_index(prs, idx)
 
     for song in setlist:
         umh_number = str(song["umh_number"]).strip()
@@ -371,7 +443,6 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
-    # ✅ ALWAYS clear for song preview
     delete_all_slides(prs)
 
     umh_number = str(song_item["umh_number"]).strip()
@@ -408,7 +479,6 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
     prs.save(output)
     output.seek(0)
     return output
-    
 
 
 def pptx_to_preview_images(pptx_bytes: BytesIO):
@@ -841,6 +911,14 @@ if st.session_state.get("reset_editor_pending"):
 
 selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
 
+if selected_template_bytes and selected_template_ok:
+    try:
+        st.session_state["template_sections"] = parse_template_sections(selected_template_bytes)
+    except Exception:
+        st.session_state["template_sections"] = []
+else:
+    st.session_state["template_sections"] = []
+
 
 # =========================================================
 # SIDEBAR
@@ -947,11 +1025,41 @@ with st.sidebar:
                 del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
                 st.session_state["selected_template_name"] = None
                 st.rerun()
+
             st.divider()
             st.checkbox(
                 "Keep existing slides in template",
                 key="preserve_template_slides",
             )
+
+            if selected_template_ok and st.session_state["template_sections"]:
+                st.divider()
+                st.markdown("#### Hide Template Sections")
+
+                section_options = [sec["id"] for sec in st.session_state["template_sections"]]
+                section_name_map = {
+                    sec["id"]: sec["title"] for sec in st.session_state["template_sections"]
+                }
+
+                st.multiselect(
+                    "Hide these uploaded template sections",
+                    options=section_options,
+                    default=st.session_state.get("hidden_section_ids", []),
+                    format_func=lambda sid: section_name_map[sid],
+                    key="hidden_section_ids",
+                )
+
+                for sec in st.session_state["template_sections"]:
+                    hidden = sec["id"] in st.session_state["hidden_section_ids"]
+                    status = "hidden" if hidden else "shown"
+                    st.caption(
+                        f'{sec["title"]}: {len(sec["content_slide_indices"])} content slide(s) · {status}'
+                    )
+            elif selected_template_ok:
+                st.info(
+                    f'No "{DIVIDER_LAYOUT_NAME}" slides detected. '
+                    "Section hiding will not be available."
+                )
         else:
             st.info("Upload at least one template.")
 
