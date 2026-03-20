@@ -804,28 +804,42 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
             raise FileNotFoundError("Preview PDF was not created.")
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
-        doc = fitz.open(pdf_path)
+
+        try:
+            doc = fitz.open(pdf_path)
+
+            # Clean / repair the PDF in memory if MuPDF can recover it.
+            repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
+            doc.close()
+
+            doc = fitz.open(stream=repaired_bytes, filetype="pdf")
+
+        except Exception as e:
+            raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
 
         images = []
-        for page in doc:
-            pix = page.get_pixmap(dpi=100)
-            mode = "RGB" if pix.alpha == 0 else "RGBA"
-            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+        try:
+            for page in doc:
+                pix = page.get_pixmap(dpi=100)
+                mode = "RGB" if pix.alpha == 0 else "RGBA"
+                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
 
-            if mode == "RGBA":
-                img = img.convert("RGB")
+                if mode == "RGBA":
+                    img = img.convert("RGB")
 
-            img = img.resize(
-                (int(pix.width * 0.7), int(pix.height * 0.7)),
-                Image.LANCZOS,
-            )
+                img = img.resize(
+                    (int(pix.width * 0.7), int(pix.height * 0.7)),
+                    Image.LANCZOS,
+                )
 
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=70, optimize=True)
-            images.append(buffer.getvalue())
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=70, optimize=True)
+                images.append(buffer.getvalue())
+        finally:
+            doc.close()
 
-        doc.close()
         return images
+    
 
 
 def preview_error_message(exc: Exception) -> str:
@@ -835,9 +849,10 @@ def preview_error_message(exc: Exception) -> str:
         return "Preview generation failed. Please check LibreOffice/soffice setup."
     if "Preview PDF was not created" in msg:
         return "Preview generation failed because no PDF preview could be created."
+    if "No common ancestor in structure tree" in msg:
+        return "Preview generation failed because the generated PDF structure is malformed. The app tried to repair it, but PyMuPDF still could not render it."
 
     return f"Preview generation failed: {msg}"
-
 
 def render_scrollable_images(images, height=760, active_slide=None):
     if not images:
