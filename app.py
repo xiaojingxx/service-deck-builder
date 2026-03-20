@@ -98,7 +98,7 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
-    "service_output_mode": "full",   # "full" | "songs"
+    "service_output_mode": "full",  # full | songs
     "selected_song_section_id": None,
 }
 
@@ -259,7 +259,7 @@ def delete_slide_by_index(prs, slide_index: int):
 
 
 # =========================================================
-# EXPERIMENTAL MOVE HELPERS
+# MOVE HELPERS
 # =========================================================
 def move_slide(prs, from_idx: int, to_idx: int):
     sldIdLst = prs.slides._sldIdLst
@@ -340,18 +340,22 @@ def get_current_divider_positions(prs):
     return positions
 
 
-def build_section_insert_map(prs):
+def find_section_insert_index(prs, section_title: str):
     divider_positions = get_current_divider_positions(prs)
-    insert_map = {}
 
-    for idx, (slide_index, section_title) in enumerate(divider_positions):
-        if idx + 1 < len(divider_positions):
-            next_divider_index = divider_positions[idx + 1][0]
-            insert_map[section_title] = next_divider_index
-        else:
-            insert_map[section_title] = len(prs.slides)
+    match_index = None
+    for idx, (_, title) in enumerate(divider_positions):
+        if title == section_title:
+            match_index = idx
+            break
 
-    return insert_map
+    if match_index is None:
+        return len(prs.slides)
+
+    if match_index + 1 < len(divider_positions):
+        return divider_positions[match_index + 1][0]
+
+    return len(prs.slides)
 
 
 def validate_template_bytes(template_bytes: bytes):
@@ -442,8 +446,31 @@ def get_ordered_songs_for_output(setlist):
     for sec in sections:
         ordered.extend(songs_by_section.get(sec["id"], []))
     ordered.extend(unassigned_songs)
-
     return ordered
+
+
+def group_songs_by_section_order(setlist):
+    sections = st.session_state.get("template_sections", [])
+    songs_by_section = {sec["id"]: [] for sec in sections}
+    unassigned = []
+
+    for idx, song in enumerate(setlist):
+        sec_id = song.get("section_id")
+        if sec_id in songs_by_section:
+            songs_by_section[sec_id].append((idx, song))
+        else:
+            unassigned.append((idx, song))
+
+    ordered_groups = []
+    for sec in sections:
+        section_songs = songs_by_section.get(sec["id"], [])
+        if section_songs:
+            ordered_groups.append((sec["id"], sec["title"], section_songs))
+
+    if unassigned:
+        ordered_groups.append((None, None, unassigned))
+
+    return ordered_groups
 
 
 def reset_editor():
@@ -656,6 +683,14 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
     return start_idx, end_idx
 
 
+def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout):
+    start_idx = len(prs.slides)
+    for _, song in section_song_pairs:
+        add_song_block_to_prs(prs, song, first_layout, rest_layout)
+    end_idx = len(prs.slides) - 1
+    return start_idx, end_idx
+
+
 def create_combined_ppt(setlist, template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
 
@@ -667,8 +702,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     output_mode = st.session_state.get("service_output_mode", "full")
     ordered_songs = get_ordered_songs_for_output(setlist)
+    grouped_sections = group_songs_by_section_order(setlist)
 
-    # Songs-only checking deck
     if output_mode == "songs":
         delete_all_slides(prs)
         for _, song in ordered_songs:
@@ -679,7 +714,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Full deck mode
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
         for _, song in ordered_songs:
@@ -690,7 +724,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Hide selected section contents, keep divider/header slides
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
     sections = st.session_state.get("template_sections", [])
 
@@ -702,31 +735,21 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    # Build insertion cursor per section AFTER deletion
-    section_insert_map = build_section_insert_map(prs)
+    # Insert section-by-section, not song-by-song
+    for sec_id, sec_title, section_song_pairs in grouped_sections:
+        if sec_id is None:
+            # unassigned songs -> append at end
+            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
+            continue
 
-    # Insert each song block into its chosen section
-    for _, song in ordered_songs:
-        section_title = get_section_title_by_id(song.get("section_id"))
-
-        if section_title and section_title in section_insert_map:
-            target_idx = section_insert_map[section_title]
-        else:
-            target_idx = len(prs.slides)
-
-        start_idx, end_idx = add_song_block_to_prs(prs, song, first_layout, rest_layout)
-        block_len = end_idx - start_idx + 1
-
+        target_idx = find_section_insert_index(prs, sec_title)
+        start_idx, end_idx = add_section_song_block_to_prs(
+            prs,
+            section_song_pairs,
+            first_layout,
+            rest_layout,
+        )
         move_slide_block(prs, start_idx, end_idx, target_idx)
-
-        # advance insertion cursor for this section
-        if section_title and section_title in section_insert_map:
-            section_insert_map[section_title] += block_len
-
-            # all later section insertion points also shift forward
-            for other_title in section_insert_map:
-                if other_title != section_title and section_insert_map[other_title] > target_idx:
-                    section_insert_map[other_title] += block_len
 
     output = BytesIO()
     prs.save(output)
@@ -1030,25 +1053,19 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
     sections = st.session_state.get("template_sections", [])
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    groups = group_songs_by_section_order(setlist)
+
+    songs_by_sec = {sec_id: song_pairs for sec_id, _, song_pairs in groups if sec_id is not None}
+    unassigned = next((song_pairs for sec_id, _, song_pairs in groups if sec_id is None), [])
 
     slide_counter = 1
-    ordered = get_ordered_songs_for_output(setlist)
-    songs_by_section = {}
-    unassigned = []
-
-    for original_idx, song in ordered:
-        sec_id = song.get("section_id")
-        if sec_id is None:
-            unassigned.append((original_idx, song))
-        else:
-            songs_by_section.setdefault(sec_id, []).append((original_idx, song))
 
     for sec in sections:
-        slide_counter += 1  # divider kept
+        slide_counter += 1  # divider
         if sec["id"] not in hidden_ids:
             slide_counter += len(sec.get("content_slide_indices", []))
 
-        for original_idx, song in songs_by_section.get(sec["id"], []):
+        for original_idx, song in songs_by_sec.get(sec["id"], []):
             starts[original_idx] = slide_counter
             slide_counter += len(song["slides"])
 
@@ -1265,7 +1282,7 @@ with st.sidebar:
                 "Service output mode",
                 options=["full", "songs"],
                 format_func=lambda x: (
-                    "Full deck (insert songs into selected sections)"
+                    "Full deck (insert section-by-section)"
                     if x == "full"
                     else "Songs only (for checking)"
                 ),
@@ -1806,7 +1823,7 @@ with main_right:
         if st.session_state.get("service_output_mode") == "songs":
             st.caption("Output mode: songs only (for checking)")
         else:
-            st.caption("Output mode: full deck with songs inserted into selected sections")
+            st.caption("Output mode: full deck with section-by-section insertion")
 
         can_generate = (
             selected_template_bytes is not None
