@@ -744,18 +744,23 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 # PREVIEW HELPERS
 # =========================================================
 def pptx_to_preview_images(pptx_bytes: BytesIO):
+    debug_copy_path = "/tmp/debug_generated_preview.pptx"
+
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
+        # Save temp copy used for conversion
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
-        debug_copy_path = "/tmp/debug_generated_preview.pptx"
+        # Save persistent debug copy for manual inspection
         try:
             with open(debug_copy_path, "wb") as f:
                 f.write(pptx_bytes.getvalue())
-        except Exception:
+            st.caption(f"Debug PPTX saved to: {debug_copy_path}")
+        except Exception as e:
             debug_copy_path = None
+            st.warning(f"Could not save debug PPTX copy: {e}")
 
         cmd = [
             SOFFICE_PATH,
@@ -765,23 +770,18 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
             pptx_path,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
         st.caption("LibreOffice command:")
         st.code(" ".join(cmd))
 
-        if debug_copy_path:
-            st.caption(f"Debug PPTX saved to: {debug_copy_path}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         st.caption(f"LibreOffice return code: {result.returncode}")
 
-        if result.stdout.strip():
-            with st.expander("LibreOffice stdout", expanded=False):
-                st.code(result.stdout)
+        with st.expander("LibreOffice stdout", expanded=False):
+            st.code(result.stdout if result.stdout else "(empty)")
 
-        if result.stderr.strip():
-            with st.expander("LibreOffice stderr", expanded=True):
-                st.code(result.stderr)
+        with st.expander("LibreOffice stderr", expanded=True):
+            st.code(result.stderr if result.stderr else "(empty)")
 
         if result.returncode != 0:
             raise RuntimeError(
@@ -802,7 +802,6 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
             )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
-
         st.caption(f"Generated PDF: {pdf_path}")
 
         doc = fitz.open(pdf_path)
@@ -827,7 +826,6 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         doc.close()
         return images
-
 
 def render_scrollable_images(images, height=760, active_slide=None):
     if not images:
