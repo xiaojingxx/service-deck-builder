@@ -16,6 +16,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
 
+fitz.TOOLS.mupdf_display_errors(False)
 
 # =========================================================
 # CONFIG
@@ -101,7 +102,7 @@ DEFAULTS = {
     "service_output_mode": "full",  # full | songs
     "selected_song_section_id": None,
     "setlist_selectbox_sidebar": 0,
-    "pending_setlist_selectbox_index": 0,
+    "pending_setlist_selectbox_index": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -1374,9 +1375,9 @@ with st.sidebar:
                 len(labels) - 1,
             )
 
-            if "pending_setlist_selectbox_index" in st.session_state:
-                pending_index = st.session_state.pop("pending_setlist_selectbox_index")
-                pending_index = max(0, min(pending_index, len(labels) - 1))
+            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
+            if pending_index is not None:
+                pending_index = max(0, min(int(pending_index), len(labels) - 1))
                 st.session_state["setlist_selectbox_sidebar"] = pending_index
                 st.session_state["setlist_selected_index"] = pending_index
 
