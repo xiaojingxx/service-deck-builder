@@ -1380,9 +1380,19 @@ with st.sidebar:
                 st.session_state["setlist_selectbox_sidebar"] = pending_index
                 st.session_state["setlist_selected_index"] = pending_index
 
-            sidebar_idx = st.session_state.get("setlist_selectbox_sidebar", 0)
-            if sidebar_idx >= len(labels):
-                st.session_state["setlist_selectbox_sidebar"] = st.session_state["setlist_selected_index"]
+            value = st.session_state.get("setlist_selectbox_sidebar", 0)
+            
+            # force it to int safely
+            try:
+                value = int(value)
+            except:
+                value = 0
+            
+            if value >= len(labels):
+                value = max(0, len(labels) - 1)
+            
+            st.session_state["setlist_selectbox_sidebar"] = value
+            st.session_state["setlist_selected_index"] = value
 
             previous_selected_index = st.session_state["setlist_selected_index"]
 
