@@ -98,8 +98,10 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
-    "service_output_mode": "full_end",  # full_end | songs_only | full_front_experimental
+    "service_output_mode": "full",  # full | songs
+    "selected_song_section_id": None,
 }
+
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -139,10 +141,12 @@ def search_titles(keyword: str, limit: int = 20):
 def split_slides_manual(text: str) -> list[list[str]]:
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
+
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
+
     return slides
 
 
@@ -248,19 +252,6 @@ def delete_slide_by_index(prs, slide_index: int):
     del prs.slides._sldIdLst[slide_index]
 
 
-# Experimental slide move helpers
-def move_slide(prs, old_index: int, new_index: int):
-    sldIdLst = prs.slides._sldIdLst
-    slide = sldIdLst[old_index]
-    del sldIdLst[old_index]
-    sldIdLst.insert(new_index, slide)
-
-
-def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
-    for idx in range(end_idx, start_idx - 1, -1):
-        move_slide(prs, idx, target_idx)
-
-
 def get_slide_layout_name(slide):
     try:
         return slide.slide_layout.name.strip()
@@ -308,6 +299,13 @@ def parse_template_sections(template_bytes: bytes):
                 current_section["content_slide_indices"].append(i)
 
     return sections
+
+
+def get_section_title_by_id(section_id):
+    for sec in st.session_state.get("template_sections", []):
+        if sec["id"] == section_id:
+            return sec["title"]
+    return None
 
 
 def validate_template_bytes(template_bytes: bytes):
@@ -361,6 +359,7 @@ def build_editor_song_item(current_slides):
         ),
         "override_lyrics_font_size": st.session_state["editor_override_lyrics_font_size"],
         "override_line_spacing": st.session_state["editor_override_line_spacing"],
+        "section_id": st.session_state.get("selected_song_section_id"),
     }
 
 
@@ -371,6 +370,7 @@ def build_current_song_signature(song_item, selected_template_name):
         tuple(tuple(slide) for slide in song_item["slides"]),
         song_item.get("lyrics_font_size_pt"),
         song_item.get("line_spacing"),
+        song_item.get("section_id"),
         selected_template_name,
         st.session_state["auto_split_by_lines"],
         st.session_state["lines_per_slide"],
@@ -378,8 +378,6 @@ def build_current_song_signature(song_item, selected_template_name):
 
 
 def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
-    start_idx = len(prs.slides)
-
     for song in setlist:
         umh_number = str(song["umh_number"]).strip()
         title = str(song["title"]).strip()
@@ -416,8 +414,25 @@ def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
                     line_spacing=line_spacing,
                 )
 
-    end_idx = len(prs.slides) - 1
-    return start_idx, end_idx
+
+def get_ordered_songs_for_output(setlist):
+    sections = st.session_state.get("template_sections", [])
+    songs_by_section = {sec["id"]: [] for sec in sections}
+    unassigned_songs = []
+
+    for song in setlist:
+        sec_id = song.get("section_id")
+        if sec_id in songs_by_section:
+            songs_by_section[sec_id].append(song)
+        else:
+            unassigned_songs.append(song)
+
+    ordered_songs = []
+    for sec in sections:
+        ordered_songs.extend(songs_by_section.get(sec["id"], []))
+    ordered_songs.extend(unassigned_songs)
+
+    return ordered_songs
 
 
 def create_combined_ppt(setlist, template_bytes: bytes):
@@ -429,39 +444,44 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
-    output_mode = st.session_state.get("service_output_mode", "full_end")
+    output_mode = st.session_state.get("service_output_mode", "full")
 
     # Songs-only checking deck
-    if output_mode == "songs_only":
+    if output_mode == "songs":
         delete_all_slides(prs)
-        add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
+        ordered_songs = get_ordered_songs_for_output(setlist)
+        add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
 
         output = BytesIO()
         prs.save(output)
         output.seek(0)
         return output
 
-    # Full deck modes
+    # Full deck mode
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
-    else:
-        hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-        sections = st.session_state.get("template_sections", [])
+        ordered_songs = get_ordered_songs_for_output(setlist)
+        add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
 
-        slides_to_delete = []
-        for sec in sections:
-            if sec["id"] in hidden_ids:
-                # hide only contents, keep divider slide
-                slides_to_delete.extend(sec.get("content_slide_indices", []))
+        output = BytesIO()
+        prs.save(output)
+        output.seek(0)
+        return output
 
-        for idx in sorted(set(slides_to_delete), reverse=True):
-            delete_slide_by_index(prs, idx)
+    # Hide selected template section contents, keep dividers
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    sections = st.session_state.get("template_sections", [])
 
-    start_idx, end_idx = add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
+    slides_to_delete = []
+    for sec in sections:
+        if sec["id"] in hidden_ids:
+            slides_to_delete.extend(sec.get("content_slide_indices", []))
 
-    # Experimental: move generated songs block to front
-    if output_mode == "full_front_experimental" and start_idx <= end_idx:
-        move_slide_block(prs, start_idx, end_idx, 0)
+    for idx in sorted(set(slides_to_delete), reverse=True):
+        delete_slide_by_index(prs, idx)
+
+    ordered_songs = get_ordered_songs_for_output(setlist)
+    add_song_slides_to_prs(prs, ordered_songs, first_layout, rest_layout)
 
     output = BytesIO()
     prs.save(output)
@@ -591,7 +611,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
     for i, img_bytes in enumerate(images, start=1):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         border = "3px solid #2563eb" if active_slide == i else "1px solid #ccc"
-        badge = " ← editing here" if active_slide == i else ""
+        badge = " ← current" if active_slide == i else ""
 
         html += f"""
         <div id="slide-{i}" style="margin-bottom: 24px;">
@@ -642,6 +662,7 @@ def reset_editor():
     st.session_state["editor_status_message"] = ""
     st.session_state["current_preview_slide"] = 1
     st.session_state["editor_ace_key"] += 1
+    st.session_state["selected_song_section_id"] = None
 
 
 def refresh_current_song_preview(song_item, template_bytes):
@@ -673,6 +694,9 @@ def load_song_into_editor(match):
     st.session_state["editor_override_line_spacing"] = False
     st.session_state["editor_lyrics_font_size_pt"] = 32
     st.session_state["editor_line_spacing"] = 1.2
+
+    sections = st.session_state.get("template_sections", [])
+    st.session_state["selected_song_section_id"] = sections[0]["id"] if sections else None
 
     st.session_state["current_song_preview_images"] = None
     st.session_state["last_editor_text"] = lyrics_raw
@@ -749,6 +773,13 @@ def apply_pending_setlist_load():
     st.session_state["editor_line_spacing"] = (
         item.get("line_spacing", 1.2) or 1.2
     )
+    st.session_state["selected_song_section_id"] = item.get("section_id")
+
+    if (
+        st.session_state["selected_song_section_id"] is None
+        and st.session_state.get("template_sections")
+    ):
+        st.session_state["selected_song_section_id"] = st.session_state["template_sections"][0]["id"]
 
     st.session_state["current_song_preview_images"] = None
     st.session_state["pending_setlist_load"] = None
@@ -895,9 +926,10 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 
 
 def get_retained_template_slide_count(template_bytes: bytes):
-    output_mode = st.session_state.get("service_output_mode", "full_end")
-
-    if output_mode == "songs_only" or not st.session_state.get("preserve_template_slides", True):
+    if (
+        st.session_state.get("service_output_mode") == "songs"
+        or not st.session_state.get("preserve_template_slides", True)
+    ):
         return 0
 
     prs = open_presentation_from_bytes(template_bytes)
@@ -915,15 +947,12 @@ def get_retained_template_slide_count(template_bytes: bytes):
 
 
 def get_service_song_start_slides(setlist, template_bytes: bytes):
-    output_mode = st.session_state.get("service_output_mode", "full_end")
-
     starts = []
-    if output_mode in {"songs_only", "full_front_experimental"}:
-        slide_counter = 1
-    else:
-        slide_counter = get_retained_template_slide_count(template_bytes) + 1
+    base = get_retained_template_slide_count(template_bytes) if st.session_state.get("service_output_mode") == "full" else 0
+    slide_counter = base + 1
 
-    for song in setlist:
+    ordered_songs = get_ordered_songs_for_output(setlist)
+    for song in ordered_songs:
         starts.append(slide_counter)
         slide_counter += len(song["slides"])
 
@@ -983,6 +1012,13 @@ if selected_template_bytes and selected_template_ok:
 else:
     st.session_state["template_sections"] = []
 
+if st.session_state.get("template_sections"):
+    valid_section_ids = {sec["id"] for sec in st.session_state["template_sections"]}
+    if st.session_state.get("selected_song_section_id") not in valid_section_ids:
+        st.session_state["selected_song_section_id"] = st.session_state["template_sections"][0]["id"]
+else:
+    st.session_state["selected_song_section_id"] = None
+
 
 # =========================================================
 # SIDEBAR
@@ -1004,11 +1040,13 @@ with st.sidebar:
         for i, song in enumerate(setlist):
             is_selected = i == selected_index
             is_editing = i == editing_index
+            section_title = get_section_title_by_id(song.get("section_id"))
+            section_suffix = f" [{section_title}]" if section_title else ""
 
             if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
+                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}{section_suffix}'
             else:
-                label = f'{i+1}. {song["title"]}'
+                label = f'{i+1}. {song["title"]}{section_suffix}'
 
             prefix = ""
             if is_selected:
@@ -1028,18 +1066,21 @@ with st.sidebar:
     loaded_umh = st.session_state.get("editor_umh", "").strip()
     loaded_title = st.session_state.get("editor_title", "").strip()
     loaded_idx = st.session_state.get("editing_setlist_index")
+    loaded_section_title = get_section_title_by_id(st.session_state.get("selected_song_section_id"))
 
     if loaded_title:
+        section_line = f"\n\nSection: {loaded_section_title}" if loaded_section_title else ""
+
         if loaded_idx is not None:
             if loaded_umh:
-                st.info(f"Editing setlist item #{loaded_idx + 1}\n\nUMH {loaded_umh} {loaded_title}")
+                st.info(f"Editing setlist item #{loaded_idx + 1}\n\nUMH {loaded_umh} {loaded_title}{section_line}")
             else:
-                st.info(f"Editing setlist item #{loaded_idx + 1}\n\n{loaded_title}")
+                st.info(f"Editing setlist item #{loaded_idx + 1}\n\n{loaded_title}{section_line}")
         else:
             if loaded_umh:
-                st.info(f"New / repository song\n\nUMH {loaded_umh} {loaded_title}")
+                st.info(f"New / repository song\n\nUMH {loaded_umh} {loaded_title}{section_line}")
             else:
-                st.info(f"New / repository song\n\n{loaded_title}")
+                st.info(f"New / repository song\n\n{loaded_title}{section_line}")
     else:
         st.caption("No song loaded in editor.")
 
@@ -1066,11 +1107,20 @@ with st.sidebar:
             if st.session_state["selected_template_name"] in template_names:
                 default_index = template_names.index(st.session_state["selected_template_name"])
 
-            st.session_state["selected_template_name"] = st.selectbox(
+            chosen_template = st.selectbox(
                 "Select template",
                 template_names,
                 index=default_index,
             )
+
+            if chosen_template != st.session_state.get("selected_template_name"):
+                st.session_state["selected_template_name"] = chosen_template
+                clear_service_outputs()
+                st.session_state["current_song_preview_images"] = None
+                st.session_state["last_current_song_signature"] = None
+                st.rerun()
+            else:
+                st.session_state["selected_template_name"] = chosen_template
 
             selected_template_bytes, selected_template_ok, selected_template_errors, selected_template_warnings = selected_template_info()
 
@@ -1088,6 +1138,9 @@ with st.sidebar:
             if st.button("Remove selected template", use_container_width=True):
                 del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
                 st.session_state["selected_template_name"] = None
+                st.session_state["template_sections"] = []
+                st.session_state["selected_song_section_id"] = None
+                clear_service_outputs()
                 st.rerun()
 
             st.divider()
@@ -1098,17 +1151,14 @@ with st.sidebar:
 
             st.radio(
                 "Service output mode",
-                options=["full_end", "songs_only", "full_front_experimental"],
-                format_func=lambda x: {
-                    "full_end": "Full deck (stable: template kept, songs appended at end)",
-                    "songs_only": "Songs only (stable: for checking)",
-                    "full_front_experimental": "Full deck, songs moved to front (experimental)",
-                }[x],
+                options=["full", "songs"],
+                format_func=lambda x: (
+                    "Full deck (template kept, songs appended at end)"
+                    if x == "full"
+                    else "Songs only (for checking)"
+                ),
                 key="service_output_mode",
             )
-
-            if st.session_state["service_output_mode"] == "full_front_experimental":
-                st.warning("Experimental mode may cause mixed order, blank slides, or preview issues on complex templates.")
 
             if selected_template_ok and st.session_state["template_sections"]:
                 st.divider()
@@ -1189,10 +1239,13 @@ with st.sidebar:
         else:
             labels = []
             for i, song in enumerate(setlist):
+                section_title = get_section_title_by_id(song.get("section_id"))
+                section_suffix = f" [{section_title}]" if section_title else ""
+
                 if song["umh_number"]:
-                    labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]} ({len(song["slides"])})')
+                    labels.append(f'{i+1}. UMH {song["umh_number"]} {song["title"]}{section_suffix} ({len(song["slides"])})')
                 else:
-                    labels.append(f'{i+1}. {song["title"]} ({len(song["slides"])})')
+                    labels.append(f'{i+1}. {song["title"]}{section_suffix} ({len(song["slides"])})')
 
             st.session_state["setlist_selected_index"] = min(
                 st.session_state.get("setlist_selected_index", 0),
@@ -1348,6 +1401,24 @@ with main_left:
         st.text_input("UMH", key="editor_umh")
     with meta_col2:
         st.text_input("Title", key="editor_title")
+
+    if st.session_state.get("template_sections"):
+        section_options = [sec["id"] for sec in st.session_state["template_sections"]]
+        section_name_map = {sec["id"]: sec["title"] for sec in st.session_state["template_sections"]}
+
+        current_section = st.session_state.get("selected_song_section_id")
+        if current_section not in section_options:
+            current_section = section_options[0]
+            st.session_state["selected_song_section_id"] = current_section
+
+        st.selectbox(
+            "Place new song under section",
+            options=section_options,
+            format_func=lambda sid: section_name_map[sid],
+            key="selected_song_section_id",
+        )
+    else:
+        st.caption("No template sections detected.")
 
     st.markdown("#### Slide Splitting")
     split_col1, split_col2 = st.columns([3, 1])
@@ -1551,6 +1622,7 @@ with main_left:
                         if s["umh_number"] == item["umh_number"]
                         and s["title"] == item["title"]
                         and s["slides"] == item["slides"]
+                        and s.get("section_id") == item.get("section_id")
                     ),
                     None,
                 )
@@ -1619,12 +1691,10 @@ with main_right:
         preview_images = st.session_state.get("current_song_preview_images")
 
     else:
-        mode_label = {
-            "full_end": "Output mode: full deck, songs appended at end",
-            "songs_only": "Output mode: songs only (checking)",
-            "full_front_experimental": "Output mode: full deck, songs moved to front (experimental)",
-        }[st.session_state.get("service_output_mode", "full_end")]
-        st.caption(mode_label)
+        if st.session_state.get("service_output_mode") == "songs":
+            st.caption("Output mode: songs only (for checking)")
+        else:
+            st.caption("Output mode: full deck with template kept and songs appended at end")
 
         can_generate = (
             selected_template_bytes is not None
