@@ -95,6 +95,7 @@ DEFAULTS = {
     "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
+    "preserve_template_slides": True,
 }
 
 for key, value in DEFAULTS.items():
@@ -316,7 +317,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
-    delete_all_slides(prs)
+    if not st.session_state.get("preserve_template_slides", True):
+        delete_all_slides(prs)
 
     for song in setlist:
         umh_number = str(song["umh_number"]).strip()
@@ -900,6 +902,11 @@ with st.sidebar:
                 del st.session_state["uploaded_templates"][st.session_state["selected_template_name"]]
                 st.session_state["selected_template_name"] = None
                 st.rerun()
+            st.divider()
+            st.checkbox(
+                "Keep existing slides in template",
+                key="preserve_template_slides",
+            )
         else:
             st.info("Upload at least one template.")
 
