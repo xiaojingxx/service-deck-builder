@@ -3,11 +3,13 @@ import io
 import base64
 import tempfile
 import subprocess
+import shutil
 from io import BytesIO
 from shutil import which
 
 import fitz  # PyMuPDF
 import gspread
+import psutil
 import streamlit as st
 from streamlit_ace import st_ace
 from google.oauth2.service_account import Credentials
@@ -132,7 +134,9 @@ def format_bytes(num_bytes: int) -> str:
         return f"{num_bytes} B"
     if num_bytes < 1024**2:
         return f"{num_bytes / 1024:.1f} KB"
-    return f"{num_bytes / (1024**2):.2f} MB"
+    if num_bytes < 1024**3:
+        return f"{num_bytes / (1024**2):.2f} MB"
+    return f"{num_bytes / (1024**3):.2f} GB"
 
 
 def preview_stats(images):
@@ -152,6 +156,25 @@ def preview_stats(images):
         "total_bytes": total,
         "avg_bytes": total // len(images),
         "max_bytes": max(sizes),
+    }
+
+
+def get_runtime_resource_stats():
+    proc = psutil.Process(os.getpid())
+    mem = proc.memory_info()
+
+    vm = psutil.virtual_memory()
+    disk = shutil.disk_usage("/")
+
+    return {
+        "process_rss": mem.rss,
+        "process_vms": mem.vms,
+        "system_available_ram": vm.available,
+        "system_total_ram": vm.total,
+        "system_used_ram": vm.used,
+        "disk_free": disk.free,
+        "disk_total": disk.total,
+        "disk_used": disk.used,
     }
 
 
@@ -1450,7 +1473,6 @@ with st.sidebar:
                 selected_index = 0
 
             selected_index = max(0, min(selected_index, len(labels) - 1))
-
             st.session_state["setlist_selected_index"] = selected_index
 
             if (
@@ -1670,20 +1692,11 @@ with main_left:
             except Exception as e:
                 st.error(preview_error_message(e))
 
-    new_signature = build_current_song_signature(
-        song_item,
-        st.session_state.get("selected_template_name"),
-    )
-
     text_changed = editor_text != old_text
     trigger_refresh = False
     current_split_settings = (
         st.session_state["auto_split_by_lines"],
         st.session_state["lines_per_slide"],
-    )
-
-    split_settings_changed = (
-        current_split_settings != st.session_state.get("last_split_settings")
     )
 
     if st.session_state["auto_split_by_lines"]:
@@ -1721,9 +1734,7 @@ with main_left:
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
 
-    # Auto preview disabled to reduce memory usage on Streamlit Cloud.
-    should_refresh_preview = False
-
+    # Auto preview disabled to reduce memory usage.
     st.session_state["last_editor_text"] = editor_text
     st.session_state["last_split_settings"] = current_split_settings
 
@@ -1777,7 +1788,7 @@ with main_left:
         if not current_slides:
             st.error("No slides to add.")
         else:
-            item = song_item
+            item = build_editor_song_item(current_slides)
             edit_idx = st.session_state.get("editing_setlist_index")
 
             if edit_idx is None:
@@ -1834,6 +1845,23 @@ with main_left:
 
 with main_right:
     st.subheader("Preview")
+
+    resource_stats = get_runtime_resource_stats()
+    with st.expander("Runtime resource usage", expanded=False):
+        st.write(f'App RAM (RSS): {format_bytes(resource_stats["process_rss"])}')
+        st.write(f'App virtual memory: {format_bytes(resource_stats["process_vms"])}')
+        st.write(
+            f'System RAM: {format_bytes(resource_stats["system_used_ram"])} used / '
+            f'{format_bytes(resource_stats["system_total_ram"])} total'
+        )
+        st.write(
+            f'System RAM available now: {format_bytes(resource_stats["system_available_ram"])}'
+        )
+        st.write(
+            f'Disk: {format_bytes(resource_stats["disk_used"])} used / '
+            f'{format_bytes(resource_stats["disk_total"])} total'
+        )
+        st.write(f'Disk free now: {format_bytes(resource_stats["disk_free"])}')
 
     preview_mode = st.radio(
         "Preview Mode",
@@ -1892,9 +1920,7 @@ with main_right:
                 use_container_width=True
             )
 
-            need_refresh = refresh_service_now
-
-            if need_refresh:
+            if refresh_service_now:
                 try:
                     refresh_service_preview(
                         st.session_state["setlist"],
