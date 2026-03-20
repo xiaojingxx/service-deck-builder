@@ -97,6 +97,7 @@ DEFAULTS = {
     "editing_song_location": None,   # {"section_id": "...", "song_index": 0}
     "editor_target_section_id": None,
     "template_signature_for_sections": None,
+    "service_section_start_slides": {},
 }
 
 for key, value in DEFAULTS.items():
@@ -116,6 +117,7 @@ def soffice_available() -> bool:
 def clear_service_outputs():
     st.session_state["ppt_data"] = None
     st.session_state["service_preview_images"] = None
+    st.session_state["service_section_start_slides"] = {}
 
 
 def find_row_by_umh(umh_number: str):
@@ -254,18 +256,6 @@ def delete_slide_by_index(prs, slide_index: int):
     del prs.slides._sldIdLst[slide_index]
 
 
-def move_slide(prs, old_index: int, new_index: int):
-    sldIdLst = prs.slides._sldIdLst
-    slide = sldIdLst[old_index]
-    del sldIdLst[old_index]
-    sldIdLst.insert(new_index, slide)
-
-
-def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
-    for idx in range(end_idx, start_idx - 1, -1):
-        move_slide(prs, idx, target_idx)
-
-
 def get_slide_layout_name(slide):
     try:
         return slide.slide_layout.name.strip()
@@ -355,7 +345,7 @@ def validate_template_bytes(template_bytes: bytes):
     if errors:
         return False, errors, warnings
 
-    # Validate generation layouts by adding temp slides
+    # validate generation layouts by adding temp slides
     first_slide = prs.slides.add_slide(first_layout)
     rest_slide = prs.slides.add_slide(rest_layout)
 
@@ -593,6 +583,7 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
+    # songs only
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
 
@@ -605,7 +596,7 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Step 1: delete hidden uploaded slides from original template
+    # preserve template slides, safely delete hidden ones only
     slides_to_delete = []
 
     for sec in service_sections:
@@ -618,26 +609,10 @@ def create_combined_ppt_from_sections(service_sections, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    # Step 2: append song slides, then move them into the right section position
-    current_insert_pos = 0
-
+    # safest version: append generated songs at end in section order
     for sec in service_sections:
-        kept_divider_count = 1 if (
-            sec.get("divider_index") is not None and sec.get("include_divider", True)
-        ) else 0
-        kept_content_count = len(sec.get("template_slide_indices", [])) if (
-            sec.get("include_template_content", True)
-        ) else 0
-
-        current_insert_pos += kept_divider_count + kept_content_count
-
         for song in sec.get("songs", []):
-            start_idx = len(prs.slides)
             add_song_to_presentation(prs, song, first_layout, rest_layout)
-            end_idx = len(prs.slides) - 1
-
-            move_slide_block(prs, start_idx, end_idx, current_insert_pos)
-            current_insert_pos += len(song["slides"])
 
     output = BytesIO()
     prs.save(output)
@@ -652,14 +627,14 @@ def get_service_section_start_slides(sections):
     for sec in sections:
         starts[sec["id"]] = slide_counter
 
-        if sec.get("include_divider", True) and sec.get("divider_index") is not None:
-            slide_counter += 1
+        if st.session_state.get("preserve_template_slides", True):
+            if sec.get("include_divider", True) and sec.get("divider_index") is not None:
+                slide_counter += 1
 
-        if sec.get("include_template_content", True):
-            slide_counter += len(sec.get("template_slide_indices", []))
+            if sec.get("include_template_content", True):
+                slide_counter += len(sec.get("template_slide_indices", []))
 
-        for song in sec.get("songs", []):
-            slide_counter += len(song["slides"])
+        # in safe mode, songs are appended at end, so section start is template section start only
 
     return starts
 
@@ -673,6 +648,7 @@ def refresh_service_preview(service_sections, template_bytes):
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
+    st.session_state["service_section_start_slides"] = get_service_section_start_slides(service_sections)
 
 
 # =========================================================
@@ -703,7 +679,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
             raise FileNotFoundError(
-                f"No PDF created.\nstdout={result.stdout}\nstderr={result.stderr}"
+                f"No PDF created. stdout={result.stdout} stderr={result.stderr}"
             )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
@@ -1629,7 +1605,7 @@ with main_right:
                 except Exception as e:
                     st.error(f"Service preview generation failed: {e}")
 
-            section_starts = get_service_section_start_slides(sections)
+            section_starts = st.session_state.get("service_section_start_slides", {})
             st.session_state["current_preview_slide"] = section_starts.get(
                 st.session_state.get("selected_section_id"),
                 1,
