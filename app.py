@@ -1370,41 +1370,44 @@ with st.sidebar:
                 else:
                     labels.append(f'{i+1}. {song["title"]}{section_suffix} ({len(song["slides"])})')
 
-            st.session_state["setlist_selected_index"] = min(
-                st.session_state.get("setlist_selected_index", 0),
-                len(labels) - 1,
-            )
-
-            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-            if pending_index is not None:
-                pending_index = max(0, min(int(pending_index), len(labels) - 1))
+                st.session_state["setlist_selected_index"] = min(
+                    st.session_state.get("setlist_selected_index", 0),
+                    len(labels) - 1,
+                )
+                
+                pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
+                
+                if pending_index is None:
+                    pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
+                
+                try:
+                    pending_index = int(pending_index)
+                except Exception:
+                    pending_index = 0
+                
+                pending_index = max(0, min(pending_index, len(labels) - 1))
+                
                 st.session_state["setlist_selectbox_sidebar"] = pending_index
                 st.session_state["setlist_selected_index"] = pending_index
-
-            value = st.session_state.get("setlist_selectbox_sidebar", 0)
-            
-            # force it to int safely
-            try:
-                value = int(value)
-            except:
-                value = 0
-            
-            if value >= len(labels):
-                value = max(0, len(labels) - 1)
-            
-            st.session_state["setlist_selectbox_sidebar"] = value
-            st.session_state["setlist_selected_index"] = value
-
-            previous_selected_index = st.session_state["setlist_selected_index"]
-
-            selected_index = st.selectbox(
-                "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                key="setlist_selectbox_sidebar",
-            )
-
-            st.session_state["setlist_selected_index"] = selected_index
+                
+                previous_selected_index = st.session_state["setlist_selected_index"]
+                
+                selected_index = st.selectbox(
+                    "Selected song",
+                    options=list(range(len(labels))),
+                    format_func=lambda i: labels[i],
+                    key="setlist_selectbox_sidebar",
+                )
+                
+                try:
+                    selected_index = int(selected_index)
+                except Exception:
+                    selected_index = 0
+                
+                selected_index = max(0, min(selected_index, len(labels) - 1))
+                
+                st.session_state["setlist_selected_index"] = selected_index
+                st.session_state["setlist_selectbox_sidebar"] = selected_index
 
             if (
                 selected_index != previous_selected_index
