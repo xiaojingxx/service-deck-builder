@@ -87,7 +87,6 @@ DEFAULTS = {
     "editor_ace_key": 0,
     "last_editor_text": "",
     "last_current_song_signature": None,
-    "last_detected_edit_line": None,
     "editor_status_message": "",
     "current_preview_slide": 1,
     "preview_mode": "song",
@@ -99,9 +98,8 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
-    "service_output_mode": "full",  # "full" or "songs"
+    "service_output_mode": "full_end",  # full_end | songs_only | full_front_experimental
 }
-
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -141,12 +139,10 @@ def search_titles(keyword: str, limit: int = 20):
 def split_slides_manual(text: str) -> list[list[str]]:
     blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
-
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if lines:
             slides.append(lines)
-
     return slides
 
 
@@ -250,6 +246,19 @@ def delete_slide_by_index(prs, slide_index: int):
     rId = slide_id.rId
     prs.part.drop_rel(rId)
     del prs.slides._sldIdLst[slide_index]
+
+
+# Experimental slide move helpers
+def move_slide(prs, old_index: int, new_index: int):
+    sldIdLst = prs.slides._sldIdLst
+    slide = sldIdLst[old_index]
+    del sldIdLst[old_index]
+    sldIdLst.insert(new_index, slide)
+
+
+def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
+    for idx in range(end_idx, start_idx - 1, -1):
+        move_slide(prs, idx, target_idx)
 
 
 def get_slide_layout_name(slide):
@@ -369,6 +378,8 @@ def build_current_song_signature(song_item, selected_template_name):
 
 
 def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
+    start_idx = len(prs.slides)
+
     for song in setlist:
         umh_number = str(song["umh_number"]).strip()
         title = str(song["title"]).strip()
@@ -405,6 +416,9 @@ def add_song_slides_to_prs(prs, setlist, first_layout, rest_layout):
                     line_spacing=line_spacing,
                 )
 
+    end_idx = len(prs.slides) - 1
+    return start_idx, end_idx
+
 
 def create_combined_ppt(setlist, template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
@@ -415,10 +429,10 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
-    output_mode = st.session_state.get("service_output_mode", "full")
+    output_mode = st.session_state.get("service_output_mode", "full_end")
 
     # Songs-only checking deck
-    if output_mode == "songs":
+    if output_mode == "songs_only":
         delete_all_slides(prs)
         add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
 
@@ -427,7 +441,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Full deck mode
+    # Full deck modes
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
     else:
@@ -437,12 +451,17 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         slides_to_delete = []
         for sec in sections:
             if sec["id"] in hidden_ids:
+                # hide only contents, keep divider slide
                 slides_to_delete.extend(sec.get("content_slide_indices", []))
 
         for idx in sorted(set(slides_to_delete), reverse=True):
             delete_slide_by_index(prs, idx)
 
-    add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
+    start_idx, end_idx = add_song_slides_to_prs(prs, setlist, first_layout, rest_layout)
+
+    # Experimental: move generated songs block to front
+    if output_mode == "full_front_experimental" and start_idx <= end_idx:
+        move_slide_block(prs, start_idx, end_idx, 0)
 
     output = BytesIO()
     prs.save(output)
@@ -553,7 +572,7 @@ def render_scrollable_images(images, height=760, active_slide=None):
         st.info("Preview will appear here.")
         return
 
-    container_id = f"preview-scroll-container-{len(images)}"
+    container_id = f"preview-scroll-container-{len(images)}-{active_slide}"
     active_slide_js = "null" if active_slide is None else str(active_slide)
 
     html = f"""
@@ -690,7 +709,7 @@ def load_song_into_editor(match):
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
     else:
         if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. ⚠️ Please select a template to generate preview."
+            st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
         elif not soffice_available():
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
@@ -767,7 +786,7 @@ def apply_pending_setlist_load():
             st.session_state["editor_status_message"] = f"Preview load failed: {e}"
     else:
         if not st.session_state.get("selected_template_name"):
-            st.session_state["editor_status_message"] = "Song loaded. ⚠️ Please select a template to generate preview."
+            st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
         elif not soffice_available():
             st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
@@ -876,10 +895,9 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 
 
 def get_retained_template_slide_count(template_bytes: bytes):
-    if (
-        st.session_state.get("service_output_mode") == "songs"
-        or not st.session_state.get("preserve_template_slides", True)
-    ):
+    output_mode = st.session_state.get("service_output_mode", "full_end")
+
+    if output_mode == "songs_only" or not st.session_state.get("preserve_template_slides", True):
         return 0
 
     prs = open_presentation_from_bytes(template_bytes)
@@ -897,9 +915,13 @@ def get_retained_template_slide_count(template_bytes: bytes):
 
 
 def get_service_song_start_slides(setlist, template_bytes: bytes):
+    output_mode = st.session_state.get("service_output_mode", "full_end")
+
     starts = []
-    base = get_retained_template_slide_count(template_bytes)
-    slide_counter = base + 1
+    if output_mode in {"songs_only", "full_front_experimental"}:
+        slide_counter = 1
+    else:
+        slide_counter = get_retained_template_slide_count(template_bytes) + 1
 
     for song in setlist:
         starts.append(slide_counter)
@@ -1076,14 +1098,17 @@ with st.sidebar:
 
             st.radio(
                 "Service output mode",
-                options=["full", "songs"],
-                format_func=lambda x: (
-                    "Full deck (template kept, songs appended at end)"
-                    if x == "full"
-                    else "Songs only (for checking)"
-                ),
+                options=["full_end", "songs_only", "full_front_experimental"],
+                format_func=lambda x: {
+                    "full_end": "Full deck (stable: template kept, songs appended at end)",
+                    "songs_only": "Songs only (stable: for checking)",
+                    "full_front_experimental": "Full deck, songs moved to front (experimental)",
+                }[x],
                 key="service_output_mode",
             )
+
+            if st.session_state["service_output_mode"] == "full_front_experimental":
+                st.warning("Experimental mode may cause mixed order, blank slides, or preview issues on complex templates.")
 
             if selected_template_ok and st.session_state["template_sections"]:
                 st.divider()
@@ -1467,10 +1492,7 @@ with main_left:
     st.session_state["last_split_settings"] = current_split_settings
 
     if st.session_state["editor_status_message"]:
-        if "⚠️" in st.session_state["editor_status_message"]:
-            st.warning(st.session_state["editor_status_message"])
-        else:
-            st.caption(st.session_state["editor_status_message"])
+        st.caption(st.session_state["editor_status_message"])
 
     st.markdown("#### Song Formatting")
 
@@ -1588,21 +1610,21 @@ with main_right:
         st.caption("Current song preview")
 
         if selected_template_bytes is None:
-            st.warning("⚠️ Please upload and select a template to see preview.")
+            st.warning("Please upload and select a template to see preview.")
         elif not selected_template_ok:
-            st.error("⚠️ Selected template is invalid.")
+            st.error("Selected template is invalid.")
         elif not soffice_available():
-            st.warning("⚠️ LibreOffice/soffice is required for preview.")
+            st.warning("LibreOffice/soffice is required for preview.")
 
         preview_images = st.session_state.get("current_song_preview_images")
 
     else:
-        st.caption("Full service deck preview")
-
-        if st.session_state.get("service_output_mode") == "songs":
-            st.caption("Output mode: songs only (for checking)")
-        else:
-            st.caption("Output mode: full deck with template kept and songs appended at end")
+        mode_label = {
+            "full_end": "Output mode: full deck, songs appended at end",
+            "songs_only": "Output mode: songs only (checking)",
+            "full_front_experimental": "Output mode: full deck, songs moved to front (experimental)",
+        }[st.session_state.get("service_output_mode", "full_end")]
+        st.caption(mode_label)
 
         can_generate = (
             selected_template_bytes is not None
