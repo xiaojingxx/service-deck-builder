@@ -1,12 +1,8 @@
 import os
 import io
 import base64
-import tempfile
-import subprocess
 from io import BytesIO
-from shutil import which
 
-import fitz  # PyMuPDF
 import gspread
 import streamlit as st
 from streamlit_ace import st_ace
@@ -14,15 +10,12 @@ from google.oauth2.service_account import Credentials
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
-fitz.TOOLS.mupdf_display_errors(False)
 
 # =========================================================
 # CONFIG
 # =========================================================
-SOFFICE_PATH = os.environ.get("SOFFICE_PATH", "soffice")
-
 SHEET_KEY = st.secrets["SHEET_KEY"]
 WORKSHEET_NAME = st.secrets["WORKSHEET_NAME"]
 
@@ -73,6 +66,8 @@ DEFAULTS = {
     "pending_setlist_load": None,
     "reset_editor_pending": False,
     "setlist_selected_index": 0,
+    "setlist_selectbox_sidebar": 0,
+    "pending_setlist_selectbox_index": None,
     "uploaded_templates": {},
     "selected_template_name": None,
     "editor_umh": "",
@@ -101,8 +96,6 @@ DEFAULTS = {
     "hidden_section_ids": [],
     "service_output_mode": "full",  # full | songs
     "selected_song_section_id": None,
-    "setlist_selectbox_sidebar": 0,
-    "pending_setlist_selectbox_index": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -113,12 +106,6 @@ for key, value in DEFAULTS.items():
 # =========================================================
 # BASIC HELPERS
 # =========================================================
-def soffice_available() -> bool:
-    if SOFFICE_PATH == "soffice":
-        return which("soffice") is not None
-    return os.path.exists(SOFFICE_PATH)
-
-
 def clear_service_outputs():
     st.session_state["ppt_data"] = None
     st.session_state["service_preview_images"] = None
@@ -529,7 +516,6 @@ def load_song_preview_if_possible():
     if (
         st.session_state.get("selected_template_name")
         and st.session_state["selected_template_name"] in st.session_state["uploaded_templates"]
-        and soffice_available()
     ):
         try:
             template_bytes = st.session_state["uploaded_templates"][
@@ -554,8 +540,6 @@ def load_song_preview_if_possible():
     else:
         if not st.session_state.get("selected_template_name"):
             st.session_state["editor_status_message"] = "Song loaded. Please select a template to generate preview."
-        elif not soffice_available():
-            st.session_state["editor_status_message"] = "Song loaded. LibreOffice/soffice is not available."
 
 
 def load_song_into_editor(match):
@@ -778,82 +762,294 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 
 
 # =========================================================
-# PREVIEW HELPERS
+# PREVIEW HELPERS (LIGHTWEIGHT)
 # =========================================================
-def pptx_to_preview_images(pptx_bytes: BytesIO):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pptx_path = os.path.join(tmpdir, "preview.pptx")
+def get_preview_canvas_size(template_bytes: bytes | None = None):
+    default_w, default_h = 1280, 720
 
-        with open(pptx_path, "wb") as f:
-            f.write(pptx_bytes.getvalue())
+    if not template_bytes:
+        return default_w, default_h
 
-        cmd = [
-            SOFFICE_PATH,
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", tmpdir,
-            pptx_path,
+    try:
+        prs = open_presentation_from_bytes(template_bytes)
+        slide_w = prs.slide_width
+        slide_h = prs.slide_height
+
+        if slide_w <= 0 or slide_h <= 0:
+            return default_w, default_h
+
+        aspect = slide_w / slide_h
+        preview_w = 1280
+        preview_h = int(preview_w / aspect)
+
+        if preview_h > 900:
+            preview_h = 900
+            preview_w = int(preview_h * aspect)
+
+        return preview_w, preview_h
+    except Exception:
+        return default_w, default_h
+
+
+def get_font(size=36, bold=False):
+    candidates = []
+    if bold:
+        candidates = [
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+    else:
+        candidates = [
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size=size)
+            except Exception:
+                pass
 
-        if result.returncode != 0:
-            raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
+    return ImageFont.load_default()
 
-        pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
-        if not pdf_files:
-            raise FileNotFoundError("Preview PDF was not created.")
 
-        pdf_path = os.path.join(tmpdir, pdf_files[0])
+def wrap_text_to_width(draw, text, font, max_width):
+    words = text.split()
+    if not words:
+        return [""]
 
-        try:
-            doc = fitz.open(pdf_path)
+    lines = []
+    current = words[0]
 
-            # Clean / repair the PDF in memory if MuPDF can recover it.
-            repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
-            doc.close()
+    for word in words[1:]:
+        trial = current + " " + word
+        bbox = draw.textbbox((0, 0), trial, font=font)
+        width = bbox[2] - bbox[0]
+        if width <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
 
-            doc = fitz.open(stream=repaired_bytes, filetype="pdf")
+    lines.append(current)
+    return lines
 
-        except Exception as e:
-            raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
 
-        images = []
-        try:
-            for page in doc:
-                pix = page.get_pixmap(dpi=100)
-                mode = "RGB" if pix.alpha == 0 else "RGBA"
-                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+def fit_lines(draw, lines, font, max_width):
+    fitted = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            fitted.append("")
+            continue
 
-                if mode == "RGBA":
-                    img = img.convert("RGB")
+        wrapped = wrap_text_to_width(draw, stripped, font, max_width)
+        fitted.extend(wrapped)
 
-                img = img.resize(
-                    (int(pix.width * 0.7), int(pix.height * 0.7)),
-                    Image.LANCZOS,
-                )
+    return fitted
 
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
-                images.append(buffer.getvalue())
-        finally:
-            doc.close()
 
-        return images
-    
+def draw_centered_multiline(draw, lines, font, fill, box, line_spacing=1.2):
+    x0, y0, x1, y1 = box
+    max_width = x1 - x0
+
+    lines = fit_lines(draw, lines, font, max_width)
+
+    heights = []
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line if line else "Ag", font=font)
+        heights.append(bbox[3] - bbox[1])
+
+    total_h = 0
+    for i, h in enumerate(heights):
+        total_h += h
+        if i < len(heights) - 1:
+            total_h += int(h * (line_spacing - 1))
+
+    y = y0 + max(0, (y1 - y0 - total_h) // 2)
+
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        x = x0 + max(0, (max_width - w) // 2)
+        draw.text((x, y), line, font=font, fill=fill)
+        y += h
+        if i < len(lines) - 1:
+            y += int(h * (line_spacing - 1))
+
+
+def render_preview_slide(slide_spec, size):
+    w, h = size
+    img = Image.new("RGB", (w, h), "white")
+    draw = ImageDraw.Draw(img)
+
+    margin = int(w * 0.06)
+
+    title_font = get_font(size=max(26, w // 28), bold=True)
+    body_font = get_font(size=max(22, w // 34), bold=False)
+    meta_font = get_font(size=max(16, w // 60), bold=False)
+
+    slide_type = slide_spec.get("type", "song")
+    title = slide_spec.get("title", "")
+    body_lines = slide_spec.get("body_lines", [])
+    meta = slide_spec.get("meta", "")
+
+    if slide_type == "divider":
+        img = Image.new("RGB", (w, h), (235, 240, 248))
+        draw = ImageDraw.Draw(img)
+
+        draw.rectangle(
+            [margin, int(h * 0.2), w - margin, int(h * 0.8)],
+            outline=(120, 140, 170),
+            width=4,
+        )
+
+        draw_centered_multiline(
+            draw,
+            [title],
+            title_font,
+            fill=(40, 55, 80),
+            box=(margin + 40, int(h * 0.28), w - margin - 40, int(h * 0.72)),
+            line_spacing=1.1,
+        )
+
+    elif slide_type == "template_placeholder":
+        img = Image.new("RGB", (w, h), (246, 246, 246))
+        draw = ImageDraw.Draw(img)
+
+        draw.rectangle(
+            [margin, margin, w - margin, h - margin],
+            outline=(180, 180, 180),
+            width=3,
+        )
+
+        draw_centered_multiline(
+            draw,
+            [title] + (body_lines or []),
+            body_font,
+            fill=(90, 90, 90),
+            box=(margin + 30, int(h * 0.22), w - margin - 30, int(h * 0.78)),
+            line_spacing=1.2,
+        )
+
+    else:
+        draw.rectangle([0, 0, w - 1, h - 1], outline=(210, 210, 210), width=2)
+
+        if title:
+            title_box = (margin, int(h * 0.06), w - margin, int(h * 0.20))
+            draw_centered_multiline(
+                draw,
+                [title],
+                title_font,
+                fill=(20, 20, 20),
+                box=title_box,
+                line_spacing=1.0,
+            )
+
+        lyrics_top = int(h * 0.24) if title else int(h * 0.16)
+        lyrics_box = (margin, lyrics_top, w - margin, int(h * 0.86))
+
+        draw_centered_multiline(
+            draw,
+            body_lines,
+            body_font,
+            fill=(10, 10, 10),
+            box=lyrics_box,
+            line_spacing=1.25,
+        )
+
+    if meta:
+        draw.text((margin, h - int(h * 0.06)), meta, font=meta_font, fill=(120, 120, 120))
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=70, optimize=True)
+    return buffer.getvalue()
+
+
+def build_song_preview_specs(song_item):
+    specs = []
+    umh_number = str(song_item.get("umh_number", "")).strip()
+    title = str(song_item.get("title", "")).strip()
+    slides = song_item.get("slides", [])
+
+    full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
+
+    for i, slide_lines in enumerate(slides):
+        specs.append({
+            "type": "song",
+            "title": full_title if i == 0 else "",
+            "body_lines": slide_lines,
+            "meta": f"Song preview · slide {i + 1}",
+        })
+
+    return specs
+
+
+def build_service_preview_specs(setlist):
+    specs = []
+
+    output_mode = st.session_state.get("service_output_mode", "full")
+    ordered_songs = get_ordered_songs_for_output(setlist)
+
+    if output_mode == "songs" or not st.session_state.get("preserve_template_slides", True):
+        for _, song in ordered_songs:
+            specs.extend(build_song_preview_specs(song))
+        return specs
+
+    sections = st.session_state.get("template_sections", [])
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    groups = group_songs_by_section_order(setlist)
+
+    songs_by_sec = {sec_id: song_pairs for sec_id, _, song_pairs in groups if sec_id is not None}
+    unassigned = next((song_pairs for sec_id, _, song_pairs in groups if sec_id is None), [])
+
+    if not sections:
+        for _, song in ordered_songs:
+            specs.extend(build_song_preview_specs(song))
+        return specs
+
+    for sec in sections:
+        specs.append({
+            "type": "divider",
+            "title": sec["title"],
+            "body_lines": [],
+            "meta": "Section divider",
+        })
+
+        if sec["id"] not in hidden_ids:
+            for i, _ in enumerate(sec.get("content_slide_indices", []), start=1):
+                specs.append({
+                    "type": "template_placeholder",
+                    "title": f"{sec['title']}",
+                    "body_lines": [f"Existing template slide kept ({i})"],
+                    "meta": "Template content placeholder",
+                })
+
+        for _, song in songs_by_sec.get(sec["id"], []):
+            specs.extend(build_song_preview_specs(song))
+
+    for _, song in unassigned:
+        specs.extend(build_song_preview_specs(song))
+
+    return specs
+
+
+def build_preview_images_from_specs(specs, template_bytes=None, max_pages=30):
+    size = get_preview_canvas_size(template_bytes)
+    images = []
+
+    for spec in specs[:max_pages]:
+        images.append(render_preview_slide(spec, size))
+
+    return images
 
 
 def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
-
-    if "Preview conversion failed" in msg:
-        return "Preview generation failed. Please check LibreOffice/soffice setup."
-    if "Preview PDF was not created" in msg:
-        return "Preview generation failed because no PDF preview could be created."
-    if "No common ancestor in structure tree" in msg:
-        return "Preview generation failed because the generated PDF structure is malformed. The app tried to repair it, but PyMuPDF still could not render it."
-
     return f"Preview generation failed: {msg}"
+
 
 def render_scrollable_images(images, height=760, active_slide=None):
     if not images:
@@ -918,8 +1114,12 @@ def render_scrollable_images(images, height=760, active_slide=None):
 # AUTO PREVIEW HELPERS
 # =========================================================
 def refresh_current_song_preview(song_item, template_bytes):
-    ppt_data = create_single_song_ppt(song_item, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
+    specs = build_song_preview_specs(song_item)
+    preview_images = build_preview_images_from_specs(
+        specs,
+        template_bytes=template_bytes,
+        max_pages=20,
+    )
 
     st.session_state["current_song_preview_images"] = preview_images
     st.session_state["last_current_song_signature"] = build_current_song_signature(
@@ -1055,7 +1255,7 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
     slide_counter = 1
 
     for sec in sections:
-        slide_counter += 1  # divider
+        slide_counter += 1
         if sec["id"] not in hidden_ids:
             slide_counter += len(sec.get("content_slide_indices", []))
 
@@ -1072,10 +1272,15 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
 def refresh_service_preview(setlist, template_bytes):
     ppt_data = create_combined_ppt(setlist, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
+    specs = build_service_preview_specs(setlist)
+    preview_images = build_preview_images_from_specs(
+        specs,
+        template_bytes=template_bytes,
+        max_pages=40,
+    )
 
     if not preview_images:
-        raise RuntimeError("No preview images generated from service PPT")
+        raise RuntimeError("No preview images generated.")
 
     st.session_state["ppt_data"] = ppt_data
     st.session_state["service_preview_images"] = preview_images
@@ -1314,9 +1519,6 @@ with st.sidebar:
         else:
             st.info("Upload at least one template.")
 
-        if not soffice_available():
-            st.warning("LibreOffice/soffice is not available.")
-
     with st.expander("2. Load Song", expanded=False):
         if st.button("Start New Song", use_container_width=True):
             st.session_state["reset_editor_pending"] = True
@@ -1370,44 +1572,43 @@ with st.sidebar:
                 else:
                     labels.append(f'{i+1}. {song["title"]}{section_suffix} ({len(song["slides"])})')
 
-                st.session_state["setlist_selected_index"] = min(
-                    st.session_state.get("setlist_selected_index", 0),
-                    len(labels) - 1,
-                )
-                
-                pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-                
-                if pending_index is None:
-                    pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
-                
-                try:
-                    pending_index = int(pending_index)
-                except Exception:
-                    pending_index = 0
-                
-                pending_index = max(0, min(pending_index, len(labels) - 1))
-                
-                st.session_state["setlist_selectbox_sidebar"] = pending_index
-                st.session_state["setlist_selected_index"] = pending_index
-                
-                previous_selected_index = st.session_state["setlist_selected_index"]
-                
-                selected_index = st.selectbox(
-                    "Selected song",
-                    options=list(range(len(labels))),
-                    format_func=lambda i: labels[i],
-                    key="setlist_selectbox_sidebar",
-                )
-                
-                try:
-                    selected_index = int(selected_index)
-                except Exception:
-                    selected_index = 0
-                
-                selected_index = max(0, min(selected_index, len(labels) - 1))
-                
-                st.session_state["setlist_selected_index"] = selected_index
-                st.session_state["setlist_selectbox_sidebar"] = selected_index
+            st.session_state["setlist_selected_index"] = min(
+                st.session_state.get("setlist_selected_index", 0),
+                len(labels) - 1,
+            )
+
+            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
+
+            if pending_index is None:
+                pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
+
+            try:
+                pending_index = int(pending_index)
+            except Exception:
+                pending_index = 0
+
+            pending_index = max(0, min(pending_index, len(labels) - 1))
+
+            st.session_state["setlist_selectbox_sidebar"] = pending_index
+            st.session_state["setlist_selected_index"] = pending_index
+
+            previous_selected_index = st.session_state["setlist_selected_index"]
+
+            selected_index = st.selectbox(
+                "Selected song",
+                options=list(range(len(labels))),
+                format_func=lambda i: labels[i],
+                key="setlist_selectbox_sidebar",
+            )
+
+            try:
+                selected_index = int(selected_index)
+            except Exception:
+                selected_index = 0
+
+            selected_index = max(0, min(selected_index, len(labels) - 1))
+            st.session_state["setlist_selected_index"] = selected_index
+            st.session_state["setlist_selectbox_sidebar"] = selected_index
 
             if (
                 selected_index != previous_selected_index
@@ -1511,7 +1712,8 @@ with st.sidebar:
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
-                st.session_state["pending_setlist_selectbox_index"] = 0
+                st.session_state["setlist_selectbox_sidebar"] = 0
+                st.session_state["pending_setlist_selectbox_index"] = None
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 clear_service_outputs()
@@ -1606,8 +1808,6 @@ with main_left:
             st.error("Please upload and select a template first.")
         elif not selected_template_ok:
             st.error("Selected template is invalid.")
-        elif not soffice_available():
-            st.error("LibreOffice/soffice is not available.")
         elif not current_slides:
             st.error("No slides to preview.")
         else:
@@ -1670,28 +1870,7 @@ with main_left:
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
 
-    should_refresh_preview = (
-        (
-            text_changed and (
-                (st.session_state["refresh_on_new_line"] and trigger_refresh)
-                or (not st.session_state["refresh_on_new_line"])
-            )
-        )
-        or split_settings_changed
-    ) and (
-        selected_template_bytes is not None
-        and selected_template_ok
-        and soffice_available()
-        and bool(current_slides)
-        and new_signature != st.session_state.get("last_current_song_signature")
-    )
-
-    if should_refresh_preview:
-        try:
-            refresh_current_song_preview(song_item, selected_template_bytes)
-            st.session_state["editor_status_message"] = "Song preview auto-refreshed."
-        except Exception as e:
-            st.session_state["editor_status_message"] = preview_error_message(e)
+    # Manual refresh only to keep memory low on Streamlit Cloud.
 
     st.session_state["last_editor_text"] = editor_text
     st.session_state["last_split_settings"] = current_split_settings
@@ -1774,21 +1953,6 @@ with main_left:
             else:
                 st.session_state["setlist"][edit_idx] = item
                 clear_service_outputs()
-
-                if (
-                    selected_template_bytes is not None
-                    and selected_template_ok
-                    and soffice_available()
-                    and current_slides
-                ):
-                    try:
-                        refresh_current_song_preview(item, selected_template_bytes)
-                        st.session_state["current_preview_slide"] = 1
-                        st.session_state["preview_mode"] = "song"
-                        st.session_state["editor_status_message"] = "Song updated and preview refreshed."
-                    except Exception as e:
-                        st.session_state["editor_status_message"] = preview_error_message(e)
-
                 st.success(
                     f'Updated: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
                 )
@@ -1819,8 +1983,6 @@ with main_right:
             st.warning("Please upload and select a template to see preview.")
         elif not selected_template_ok:
             st.error("Selected template is invalid.")
-        elif not soffice_available():
-            st.warning("LibreOffice/soffice is required for preview.")
 
         preview_images = st.session_state.get("current_song_preview_images")
 
@@ -1828,12 +1990,11 @@ with main_right:
         if st.session_state.get("service_output_mode") == "songs":
             st.caption("Output mode: songs only (for checking)")
         else:
-            st.caption("Output mode: full deck with section-by-section insertion")
+            st.caption("Output mode: lightweight service preview")
 
         can_generate = (
             selected_template_bytes is not None
             and selected_template_ok
-            and soffice_available()
             and len(st.session_state["setlist"]) > 0
         )
 
@@ -1883,8 +2044,6 @@ with main_right:
                 st.info("Please upload and select a template first.")
             elif not selected_template_ok:
                 st.info("Selected template is invalid.")
-            elif not soffice_available():
-                st.info("LibreOffice/soffice is not available.")
             elif not st.session_state["setlist"]:
                 st.info("Add songs to the setlist to view the service preview.")
 
