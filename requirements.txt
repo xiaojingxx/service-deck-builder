@@ -4,3 +4,4 @@ PyMuPDF
 gspread
 google-auth
 python-pptx
+psutil
