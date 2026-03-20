@@ -100,6 +100,8 @@ DEFAULTS = {
     "hidden_section_ids": [],
     "service_output_mode": "full",  # full | songs
     "selected_song_section_id": None,
+    "setlist_selectbox_sidebar": 0,
+    "pending_setlist_selectbox_index": 0,
 }
 
 for key, value in DEFAULTS.items():
@@ -1363,10 +1365,8 @@ with st.sidebar:
                 st.session_state["setlist_selectbox_sidebar"] = pending_index
                 st.session_state["setlist_selected_index"] = pending_index
 
-            if (
-                "setlist_selectbox_sidebar" not in st.session_state
-                or st.session_state["setlist_selectbox_sidebar"] >= len(labels)
-            ):
+            sidebar_idx = st.session_state.get("setlist_selectbox_sidebar", 0)
+            if sidebar_idx >= len(labels):
                 st.session_state["setlist_selectbox_sidebar"] = st.session_state["setlist_selected_index"]
 
             previous_selected_index = st.session_state["setlist_selected_index"]
