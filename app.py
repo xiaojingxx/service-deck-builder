@@ -1398,7 +1398,6 @@ with st.sidebar:
             selected_index = max(0, min(selected_index, len(labels) - 1))
 
             st.session_state["setlist_selected_index"] = selected_index
-            st.session_state["setlist_selectbox_sidebar"] = selected_index
 
             if (
                 selected_index != previous_selected_index
