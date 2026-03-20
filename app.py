@@ -98,7 +98,7 @@ DEFAULTS = {
     "preserve_template_slides": True,
     "template_sections": [],
     "hidden_section_ids": [],
-    "service_output_mode": "full",  # full | songs
+    "service_output_mode": "full",   # "full" | "songs"
     "selected_song_section_id": None,
 }
 
@@ -332,33 +332,26 @@ def get_section_title_by_id(section_id):
     return None
 
 
-def get_current_divider_indices_and_titles(prs):
-    result = []
+def get_current_divider_positions(prs):
+    positions = []
     for i, slide in enumerate(prs.slides):
         if is_divider_slide(slide):
-            result.append((i, get_divider_title(slide)))
-    return result
+            positions.append((i, get_divider_title(slide)))
+    return positions
 
 
-def find_section_insert_index(prs, section_title: str):
-    divider_positions = get_current_divider_indices_and_titles(prs)
+def build_section_insert_map(prs):
+    divider_positions = get_current_divider_positions(prs)
+    insert_map = {}
 
-    match_index = None
-    for idx, (_, title) in enumerate(divider_positions):
-        if title == section_title:
-            match_index = idx
-            break
+    for idx, (slide_index, section_title) in enumerate(divider_positions):
+        if idx + 1 < len(divider_positions):
+            next_divider_index = divider_positions[idx + 1][0]
+            insert_map[section_title] = next_divider_index
+        else:
+            insert_map[section_title] = len(prs.slides)
 
-    if match_index is None:
-        return len(prs.slides)
-
-    divider_slide_index = divider_positions[match_index][0]
-
-    if match_index + 1 < len(divider_positions):
-        next_divider_index = divider_positions[match_index + 1][0]
-        return next_divider_index
-
-    return len(prs.slides)
+    return insert_map
 
 
 def validate_template_bytes(template_bytes: bytes):
@@ -450,7 +443,7 @@ def get_ordered_songs_for_output(setlist):
         ordered.extend(songs_by_section.get(sec["id"], []))
     ordered.extend(unassigned_songs)
 
-    return ordered  # list of (original_index, song)
+    return ordered
 
 
 def reset_editor():
@@ -697,7 +690,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # Hide selected section contents, but keep divider/header slides
+    # Hide selected section contents, keep divider/header slides
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
     sections = st.session_state.get("template_sections", [])
 
@@ -709,12 +702,31 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    # Insert each song block into its chosen section using _sldIdLst.insert()
+    # Build insertion cursor per section AFTER deletion
+    section_insert_map = build_section_insert_map(prs)
+
+    # Insert each song block into its chosen section
     for _, song in ordered_songs:
         section_title = get_section_title_by_id(song.get("section_id"))
-        target_idx = find_section_insert_index(prs, section_title) if section_title else len(prs.slides)
+
+        if section_title and section_title in section_insert_map:
+            target_idx = section_insert_map[section_title]
+        else:
+            target_idx = len(prs.slides)
+
         start_idx, end_idx = add_song_block_to_prs(prs, song, first_layout, rest_layout)
+        block_len = end_idx - start_idx + 1
+
         move_slide_block(prs, start_idx, end_idx, target_idx)
+
+        # advance insertion cursor for this section
+        if section_title and section_title in section_insert_map:
+            section_insert_map[section_title] += block_len
+
+            # all later section insertion points also shift forward
+            for other_title in section_insert_map:
+                if other_title != section_title and section_insert_map[other_title] > target_idx:
+                    section_insert_map[other_title] += block_len
 
     output = BytesIO()
     prs.save(output)
@@ -749,11 +761,9 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
-        # Save temp copy used for conversion
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
-        # Save persistent debug copy for manual inspection
         try:
             with open(debug_copy_path, "wb") as f:
                 f.write(pptx_bytes.getvalue())
@@ -826,6 +836,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         doc.close()
         return images
+
 
 def render_scrollable_images(images, height=760, active_slide=None):
     if not images:
@@ -1382,7 +1393,7 @@ with st.sidebar:
             ):
                 starts = st.session_state.get("service_song_start_slides", [])
                 st.session_state["current_preview_slide"] = (
-                    starts[selected_index] if selected_index < len(starts) else 1
+                    starts[selected_index] if selected_index < len(starts) and starts[selected_index] is not None else 1
                 )
                 st.rerun()
 
