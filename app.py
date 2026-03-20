@@ -363,7 +363,52 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
 
 def create_single_song_ppt(song_item, template_bytes: bytes):
-    return create_combined_ppt([song_item], template_bytes)
+    prs = open_presentation_from_bytes(template_bytes)
+
+    first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
+    rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+
+    if first_layout is None or rest_layout is None:
+        raise ValueError("Template layouts not found.")
+
+    # ✅ ALWAYS clear for song preview
+    delete_all_slides(prs)
+
+    umh_number = str(song_item["umh_number"]).strip()
+    title = str(song_item["title"]).strip()
+    slides = song_item["slides"]
+
+    lyrics_font_size_pt = song_item.get("lyrics_font_size_pt")
+    line_spacing = song_item.get("line_spacing")
+
+    full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
+
+    for i, slide_lines in enumerate(slides):
+        lyrics_text = "\n".join(slide_lines)
+
+        if i == 0:
+            slide = prs.slides.add_slide(first_layout)
+            set_shape_text(slide.shapes.title, full_title)
+            set_shape_text(
+                get_body_placeholder(slide),
+                lyrics_text,
+                font_size_pt=lyrics_font_size_pt,
+                line_spacing=line_spacing,
+            )
+        else:
+            slide = prs.slides.add_slide(rest_layout)
+            set_shape_text(
+                get_body_placeholder(slide),
+                lyrics_text,
+                font_size_pt=lyrics_font_size_pt,
+                line_spacing=line_spacing,
+            )
+
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+    
 
 
 def pptx_to_preview_images(pptx_bytes: BytesIO):
