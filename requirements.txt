@@ -5,4 +5,4 @@ gspread
 google-auth
 python-pptx
 psutil
-docx
+python-docx
