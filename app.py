@@ -1022,8 +1022,10 @@ def import_setlist_from_order_docx(docx_file, template_sections):
     Behavior:
     - Uploaded template section headers remain the source of truth.
     - DOCX is parsed into ordered blocks.
-    - Only headings that strongly match a template section start a new major block.
-    - Minor DOCX headings and text remain nested inside the current matched template block.
+    - Plain DOCX headings that match a template section start a new major block.
+    - Minor DOCX headings like + Songs of Praise stay nested inside the current block.
+    - If songs appear before the first strong matched anchor, they fall back to the
+      first template section so they do not remain unassigned.
     """
     lines = read_docx_lines(docx_file)
 
@@ -1037,6 +1039,124 @@ def import_setlist_from_order_docx(docx_file, template_sections):
     pending_pre_anchor_items = []
     block_seq = 0
     song_seq = 0
+
+    def start_block(docx_heading: str, match: dict, source: str):
+        nonlocal current_block, block_seq
+        block_seq += 1
+        current_block = {
+            "block_id": f"block_{block_seq}",
+            "section_id": match["section_id"],
+            "section_title": match["section_title"],
+            "source_heading": docx_heading,
+            "match_type": match["match_type"],
+            "score": match["score"],
+            "items": [],
+        }
+        if pending_pre_anchor_items:
+            current_block["items"].extend(pending_pre_anchor_items.copy())
+            pending_pre_anchor_items.clear()
+        service_order_blocks.append(current_block)
+        section_mapping_rows.append({
+            "docx_heading": docx_heading,
+            "mapped_section_id": match["section_id"],
+            "mapped_section_title": match["section_title"],
+            "match_type": match["match_type"],
+            "score": match["score"],
+            "source": source,
+        })
+
+    def ensure_default_block():
+        if current_block is None and template_sections:
+            first_sec = template_sections[0]
+            start_block(
+                first_sec["title"],
+                {
+                    "section_id": first_sec["id"],
+                    "section_title": first_sec["title"],
+                    "match_type": "fallback-first",
+                    "score": 100,
+                },
+                "fallback",
+            )
+
+    def add_non_song_item(item: dict):
+        if current_block is not None:
+            current_block["items"].append(item)
+        else:
+            pending_pre_anchor_items.append(item)
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        is_prefixed_heading = stripped.startswith(("+", "#"))
+        heading_text = stripped[1:].strip() if is_prefixed_heading else stripped
+        heading_match = None
+
+        # Only plain headings can start a major block.
+        # Prefixed headings like + Songs of Praise stay inside the current block.
+        if not is_prefixed_heading and should_treat_docx_line_as_anchor(stripped):
+            heading_match = match_template_section_from_heading(heading_text, template_sections)
+
+        # Lowered threshold from 88 to 60 so headings like
+        # "Call to Worship (based on Ps 130:5-7)" still map.
+        if heading_match and heading_match["score"] >= 60:
+            start_block(heading_text, heading_match, "plain")
+            continue
+
+        if is_prefixed_heading:
+            # Keep subgroup headings under current major section.
+            ensure_default_block()
+            add_non_song_item({
+                "type": "minor_heading",
+                "text": heading_text,
+            })
+            continue
+
+        if is_umh_song_line(stripped):
+            # If songs appear before first matched major anchor,
+            # attach them to the first template section.
+            ensure_default_block()
+
+            parsed = parse_umh_song_line(stripped)
+            parsed["docx_section_heading"] = current_block["section_title"] if current_block else None
+            parsed["mapped_section_id"] = current_block["section_id"] if current_block else None
+            parsed["mapped_section_title"] = current_block["section_title"] if current_block else None
+            parsed["section_match_type"] = current_block["match_type"] if current_block else "unmatched"
+            parsed_song_rows.append(parsed)
+
+            row = find_row_by_umh(parsed["umh_number"])
+            if row:
+                import_uid = f"import_song_{song_seq}_{parsed['umh_number']}_{len(imported_items)}"
+                song_seq += 1
+                song_item = build_song_item_from_row(
+                    row,
+                    section_id=current_block["section_id"] if current_block else None,
+                )
+                song_item["import_uid"] = import_uid
+                song_item["service_block_id"] = current_block["block_id"] if current_block else None
+                song_item["service_block_order"] = len(service_order_blocks) - 1 if current_block else None
+                song_item["service_block_title"] = current_block["section_title"] if current_block else None
+                imported_items.append(song_item)
+
+                add_non_song_item({
+                    "type": "song",
+                    "import_uid": import_uid,
+                })
+            else:
+                missing_songs.append(parsed)
+            continue
+
+        # Plain non-song text:
+        # keep it under current block if there is one,
+        # otherwise leave pending until the first block is created.
+        add_non_song_item({
+            "type": "text",
+            "text": stripped,
+        })
+
+    return imported_items, missing_songs, parsed_song_rows, section_mapping_rows, service_order_blocks
 
     def start_block(docx_heading: str, match: dict, source: str):
         nonlocal current_block, block_seq
