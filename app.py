@@ -837,16 +837,11 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 # PREVIEW HELPERS
 # =========================================================
 def pptx_to_preview_images(pptx_bytes: BytesIO):
-
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
-
-        # ✅ ADD HERE (after saving file, before soffice runs)
-        st.write("Saved debug file:", pptx_path)
-        st.write("Exists:", os.path.exists(pptx_path))
 
         cmd = [
             SOFFICE_PATH,
@@ -858,16 +853,49 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        # ✅ ALSO ADD HERE (to debug LibreOffice)
-        st.write("SOFFICE return code:", result.returncode)
-        st.write("stdout:", result.stdout)
-        st.write("stderr:", result.stderr)
+        if result.returncode != 0:
+            raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
+        if not pdf_files:
+            raise FileNotFoundError("Preview PDF was not created.")
 
-        # ✅ ADD HERE (to check conversion result)
-        st.write("Files in temp dir:", os.listdir(tmpdir))
+        pdf_path = os.path.join(tmpdir, pdf_files[0])
 
+        try:
+            doc = fitz.open(pdf_path)
+
+            # Clean / repair the PDF in memory if MuPDF can recover it.
+            repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
+            doc.close()
+
+            doc = fitz.open(stream=repaired_bytes, filetype="pdf")
+
+        except Exception as e:
+            raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
+
+        images = []
+        try:
+            for page in doc:
+                pix = page.get_pixmap(dpi=100)
+                mode = "RGB" if pix.alpha == 0 else "RGBA"
+                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+
+                if mode == "RGBA":
+                    img = img.convert("RGB")
+
+                img = img.resize(
+                    (int(pix.width * 0.7), int(pix.height * 0.7)),
+                    Image.LANCZOS,
+                )
+
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=70, optimize=True)
+                images.append(buffer.getvalue())
+        finally:
+            doc.close()
+
+        return images
 def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
 
