@@ -877,7 +877,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         images = []
         try:
             for page in doc:
-                pix = page.get_pixmap(dpi=100)
+                pix = page.get_pixmap(dpi=60)
                 mode = "RGB" if pix.alpha == 0 else "RGBA"
                 img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
 
@@ -890,12 +890,13 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
                 )
 
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
+                img.save(buffer, format="JPEG", quality=45, optimize=True)
                 images.append(buffer.getvalue())
         finally:
             doc.close()
 
         return images
+
 def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
 
