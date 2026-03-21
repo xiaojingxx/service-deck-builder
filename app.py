@@ -114,11 +114,6 @@ DEFAULTS = {
     "setlist_selectbox_sidebar": 0,
     "pending_setlist_selectbox_index": None,
     "generated_service_items": [],
-    "generated_item_selected_index": 0,
-    "editing_generated_index": None,
-    "generated_editor_title": "",
-    "generated_editor_body": "",
-    "generated_editor_section_id": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -173,41 +168,6 @@ def normalize_flow_orders():
     entries.sort(key=lambda x: x[0])
     for new_order, (_, entry) in enumerate(entries):
         entry["flow_order"] = new_order
-
-
-def reset_generated_item_editor():
-    st.session_state["editing_generated_index"] = None
-    st.session_state["generated_editor_title"] = ""
-    st.session_state["generated_editor_body"] = ""
-    st.session_state["generated_editor_section_id"] = None
-
-
-def load_generated_item_into_editor(index: int):
-    items = st.session_state.get("generated_service_items", [])
-    if not (0 <= index < len(items)):
-        reset_generated_item_editor()
-        return
-
-    item = items[index]
-    st.session_state["editing_generated_index"] = index
-    st.session_state["generated_item_selected_index"] = index
-    st.session_state["generated_editor_title"] = item.get("title", "")
-    st.session_state["generated_editor_body"] = "\n".join(item.get("body_lines", []))
-    st.session_state["generated_editor_section_id"] = item.get("section_id")
-
-
-def build_generated_item_from_editor(flow_order=None):
-    title = str(st.session_state.get("generated_editor_title", "")).strip()
-    body_text = str(st.session_state.get("generated_editor_body", ""))
-    body_lines = [line.strip() for line in body_text.splitlines() if line.strip()]
-    section_id = st.session_state.get("generated_editor_section_id")
-    return make_generated_service_item(
-        title=title,
-        section_id=section_id,
-        body_lines=body_lines,
-        flow_order=flow_order if flow_order is not None else next_service_flow_order(),
-        source_heading=title,
-    )
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -1697,39 +1657,6 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### Imported Text Items")
-
-    generated_items = st.session_state.get("generated_service_items", [])
-    if not generated_items:
-        st.caption("No imported text items yet.")
-    else:
-        selected_generated_index = st.session_state.get("generated_item_selected_index", 0)
-        editing_generated_index = st.session_state.get("editing_generated_index")
-        selected_generated_index = max(0, min(selected_generated_index, len(generated_items) - 1))
-        st.session_state["generated_item_selected_index"] = selected_generated_index
-
-        for i, item in enumerate(generated_items):
-            is_selected = i == selected_generated_index
-            is_editing = i == editing_generated_index
-            section_title = get_section_title_by_id(item.get("section_id"))
-            section_suffix = f" [{section_title}]" if section_title else ""
-            body_count = len(item.get("body_lines", []))
-            body_suffix = f" ({body_count} line{'s' if body_count != 1 else ''})" if body_count else ""
-            label = f"{i+1}. {item.get('title', 'Untitled text item')}{body_suffix}{section_suffix}"
-
-            prefix = ""
-            if is_selected:
-                prefix += "🔹 "
-            if is_editing:
-                prefix += "✏️ "
-
-            if prefix:
-                st.markdown(f"**{prefix}{label}**")
-            else:
-                st.markdown(label)
-
-    st.divider()
-
     st.markdown("### Loaded in Editor")
 
     loaded_umh = st.session_state.get("editor_umh", "").strip()
@@ -2064,8 +1991,6 @@ with st.sidebar:
             if st.button("Clear Setlist", use_container_width=True, type="secondary"):
                 st.session_state["setlist"] = []
                 st.session_state["generated_service_items"] = []
-                reset_generated_item_editor()
-                st.session_state["generated_item_selected_index"] = 0
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
@@ -2121,8 +2046,6 @@ with st.sidebar:
                     st.session_state["setlist_selected_index"] = 0
                     st.session_state["pending_setlist_selectbox_index"] = 0
                     st.session_state["setlist_selectbox_sidebar"] = 0
-                    st.session_state["generated_item_selected_index"] = 0
-                    reset_generated_item_editor()
 
                     st.success(f"Imported {len(imported_items)} song(s) and {len(generated_items)} generated text item(s) from DOCX.")
 
@@ -2149,129 +2072,6 @@ with st.sidebar:
                 except Exception as e:
                     st.exception(e)
 
-
-    with st.expander("5. Imported Text Items", expanded=False):
-        generated_items = st.session_state.get("generated_service_items", [])
-
-        if not generated_items:
-            st.caption("No imported non-song items yet. Import a DOCX with non-song text slides enabled.")
-        else:
-            generated_labels = []
-            for idx, item in enumerate(generated_items):
-                sec_title = get_section_title_by_id(item.get("section_id"))
-                sec_suffix = f" [{sec_title}]" if sec_title else ""
-                body_count = len(item.get("body_lines", []))
-                body_suffix = f" ({body_count} line{'s' if body_count != 1 else ''})" if body_count else ""
-                generated_labels.append(f"{idx + 1}. {item.get('title', 'Untitled text item')}{body_suffix}{sec_suffix}")
-
-            selected_generated_index = st.session_state.get("generated_item_selected_index", 0)
-            selected_generated_index = max(0, min(selected_generated_index, len(generated_items) - 1))
-            selected_generated_index = st.selectbox(
-                "Select imported text item",
-                options=list(range(len(generated_labels))),
-                index=selected_generated_index,
-                format_func=lambda i: generated_labels[i],
-                key="generated_item_selectbox",
-            )
-            st.session_state["generated_item_selected_index"] = selected_generated_index
-
-            action_cols = st.columns(5)
-            with action_cols[0]:
-                if st.button("Load", use_container_width=True, key="load_generated_item_btn"):
-                    load_generated_item_into_editor(selected_generated_index)
-                    st.rerun()
-            with action_cols[1]:
-                if st.button("⬆️", use_container_width=True, key="move_generated_up_btn", help="Move selected text item up") and selected_generated_index > 0:
-                    items = st.session_state["generated_service_items"]
-                    items[selected_generated_index - 1]["flow_order"], items[selected_generated_index]["flow_order"] = (
-                        items[selected_generated_index]["flow_order"],
-                        items[selected_generated_index - 1]["flow_order"],
-                    )
-                    normalize_flow_orders()
-                    st.session_state["generated_item_selected_index"] = selected_generated_index - 1
-                    if st.session_state.get("editing_generated_index") == selected_generated_index:
-                        st.session_state["editing_generated_index"] = selected_generated_index - 1
-                    elif st.session_state.get("editing_generated_index") == selected_generated_index - 1:
-                        st.session_state["editing_generated_index"] = selected_generated_index
-                    clear_service_outputs()
-                    st.rerun()
-            with action_cols[2]:
-                if st.button("⬇️", use_container_width=True, key="move_generated_down_btn", help="Move selected text item down") and selected_generated_index < len(generated_items) - 1:
-                    items = st.session_state["generated_service_items"]
-                    items[selected_generated_index + 1]["flow_order"], items[selected_generated_index]["flow_order"] = (
-                        items[selected_generated_index]["flow_order"],
-                        items[selected_generated_index + 1]["flow_order"],
-                    )
-                    normalize_flow_orders()
-                    st.session_state["generated_item_selected_index"] = selected_generated_index + 1
-                    if st.session_state.get("editing_generated_index") == selected_generated_index:
-                        st.session_state["editing_generated_index"] = selected_generated_index + 1
-                    elif st.session_state.get("editing_generated_index") == selected_generated_index + 1:
-                        st.session_state["editing_generated_index"] = selected_generated_index
-                    clear_service_outputs()
-                    st.rerun()
-            with action_cols[3]:
-                if st.button("New", use_container_width=True, key="new_generated_item_btn"):
-                    reset_generated_item_editor()
-                    default_section_id = None
-                    if st.session_state.get("template_sections"):
-                        default_section_id = st.session_state["template_sections"][0]["id"]
-                    st.session_state["generated_editor_section_id"] = default_section_id
-                    st.rerun()
-            with action_cols[4]:
-                if st.button("🗑️", use_container_width=True, key="delete_generated_item_btn", help="Delete selected text item"):
-                    st.session_state["generated_service_items"].pop(selected_generated_index)
-                    st.session_state["generated_item_selected_index"] = max(0, min(selected_generated_index, len(st.session_state["generated_service_items"]) - 1))
-                    if st.session_state.get("editing_generated_index") == selected_generated_index:
-                        reset_generated_item_editor()
-                    elif st.session_state.get("editing_generated_index") is not None and st.session_state["editing_generated_index"] > selected_generated_index:
-                        st.session_state["editing_generated_index"] -= 1
-                    normalize_flow_orders()
-                    clear_service_outputs()
-                    st.rerun()
-
-        section_options = [None] + [sec["id"] for sec in st.session_state.get("template_sections", [])]
-        if st.session_state.get("generated_editor_section_id") not in section_options:
-            st.session_state["generated_editor_section_id"] = section_options[0] if section_options else None
-
-        st.text_input("Text item title", key="generated_editor_title")
-        st.text_area("Body text (one line per line)", key="generated_editor_body", height=180)
-        st.selectbox(
-            "Assign section",
-            options=section_options,
-            index=section_options.index(st.session_state.get("generated_editor_section_id")) if section_options else 0,
-            format_func=lambda sid: get_section_title_by_id(sid) if sid else "Unassigned",
-            key="generated_editor_section_id",
-        )
-
-        save_cols = st.columns(2)
-        with save_cols[0]:
-            if st.button("Save Text Item", use_container_width=True, key="save_generated_item_btn"):
-                title = str(st.session_state.get("generated_editor_title", "")).strip()
-                if not title:
-                    st.error("Text item title cannot be empty.")
-                else:
-                    edit_idx = st.session_state.get("editing_generated_index")
-                    if edit_idx is None:
-                        st.session_state["generated_service_items"].append(build_generated_item_from_editor())
-                        normalize_flow_orders()
-                        st.session_state["generated_item_selected_index"] = len(st.session_state["generated_service_items"]) - 1
-                        load_generated_item_into_editor(st.session_state["generated_item_selected_index"])
-                    else:
-                        flow_order = st.session_state["generated_service_items"][edit_idx].get("flow_order", next_service_flow_order())
-                        st.session_state["generated_service_items"][edit_idx] = build_generated_item_from_editor(flow_order=flow_order)
-                        normalize_flow_orders()
-                        load_generated_item_into_editor(edit_idx)
-                    clear_service_outputs()
-                    st.success("Text item saved.")
-                    st.rerun()
-        with save_cols[1]:
-            if st.button("Clear Text Editor", use_container_width=True, key="clear_generated_item_btn"):
-                reset_generated_item_editor()
-                st.rerun()
-
-        if st.session_state.get("editing_generated_index") is not None:
-            st.caption(f"Editing imported text item #{st.session_state['editing_generated_index'] + 1}")
 
 
 # =========================================================
