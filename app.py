@@ -1739,7 +1739,8 @@ with st.sidebar:
 
             pending_index = max(0, min(pending_index, len(labels) - 1))
 
-            st.session_state["setlist_selectbox_sidebar"] = pending_index
+            if "setlist_selectbox_sidebar" not in st.session_state:
+                st.session_state["setlist_selectbox_sidebar"] = pending_index
             st.session_state["setlist_selected_index"] = pending_index
 
             previous_selected_index = st.session_state["setlist_selected_index"]
@@ -1904,7 +1905,6 @@ with st.sidebar:
                     st.session_state["pending_setlist_load"] = None
                     st.session_state["setlist_selected_index"] = 0
                     st.session_state["pending_setlist_selectbox_index"] = 0
-                    st.session_state["setlist_selectbox_sidebar"] = 0
 
                     st.success(f"Imported {len(imported_items)} song(s) from DOCX.")
 
