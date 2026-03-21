@@ -10,6 +10,7 @@ from shutil import which
 import fitz  # PyMuPDF
 import gspread
 import psutil
+import re
 import streamlit as st
 from streamlit_ace import st_ace
 from google.oauth2.service_account import Credentials
@@ -17,6 +18,7 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
+from docx import Document
 
 
 # =========================================================
@@ -694,6 +696,150 @@ def apply_pending_setlist_load():
     st.session_state["editor_ace_key"] += 1
 
     load_song_preview_if_possible()
+
+
+
+# =========================================================
+# ORDER OF SERVICE DOCX IMPORT
+# =========================================================
+UMH_IMPORT_RE = re.compile(
+    r"^(?P<hymnal>UMH)\s*(?P<number>\d+)\.?\s+(?P<title>.+?)(?:\s*\((?P<stanzas>.+?)\))?\s*$",
+    re.IGNORECASE,
+)
+
+DOCX_SECTION_ALIASES = {
+    "songs of praise": ["songs of praise", "hymns of praise", "opening song", "opening songs"],
+    "closing song": ["closing song", "closing hymn", "closing hymns"],
+    "gloria patri": ["gloria patri"],
+}
+
+
+def normalize_text(s: str) -> str:
+    return re.sub(r"\s+", " ", str(s or "").strip()).lower()
+
+
+def read_docx_lines(docx_file) -> list[str]:
+    doc = Document(docx_file)
+    lines = []
+    for para in doc.paragraphs:
+        text = para.text.replace("\xa0", " ").strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
+def is_umh_song_line(line: str) -> bool:
+    return UMH_IMPORT_RE.match(line.strip()) is not None
+
+
+def parse_umh_song_line(line: str) -> dict:
+    m = UMH_IMPORT_RE.match(line.strip())
+    if not m:
+        return {
+            "umh_number": "",
+            "title": line.strip(),
+            "stanzas": "",
+            "raw": line.strip(),
+        }
+
+    return {
+        "umh_number": (m.group("number") or "").strip(),
+        "title": (m.group("title") or "").strip(),
+        "stanzas": (m.group("stanzas") or "").strip(),
+        "raw": line.strip(),
+    }
+
+
+def section_id_from_heading(heading: str, template_sections: list[dict]) -> str | None:
+    if not template_sections:
+        return None
+
+    heading_norm = normalize_text(heading)
+
+    for sec in template_sections:
+        sec_title_norm = normalize_text(sec["title"])
+        if (
+            heading_norm == sec_title_norm
+            or heading_norm in sec_title_norm
+            or sec_title_norm in heading_norm
+        ):
+            return sec["id"]
+
+    for sec in template_sections:
+        sec_title_norm = normalize_text(sec["title"])
+        for aliases in DOCX_SECTION_ALIASES.values():
+            if heading_norm in aliases:
+                for alias in aliases:
+                    if alias in sec_title_norm:
+                        return sec["id"]
+
+    return None
+
+
+def build_song_item_from_row(row, section_id=None):
+    lyrics_raw = str(row.get("Lyrics (Raw)", "")).strip()
+    slides = split_slides_manual(lyrics_raw)
+
+    return {
+        "umh_number": str(row.get("UMH Number", "")).strip(),
+        "title": str(row.get("Title", "")).strip(),
+        "slides": slides,
+        "lyrics_font_size_pt": None,
+        "line_spacing": None,
+        "override_lyrics_font_size": False,
+        "override_line_spacing": False,
+        "section_id": section_id,
+    }
+
+
+def import_setlist_from_order_docx(docx_file, template_sections):
+    """
+    Returns:
+      imported_items: list[dict]
+      missing_songs: list[dict]
+      parsed_song_rows: list[dict]
+    """
+    lines = read_docx_lines(docx_file)
+
+    imported_items = []
+    missing_songs = []
+    parsed_song_rows = []
+
+    current_section_heading = None
+    current_section_id = None
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("+"):
+            current_section_heading = stripped[1:].strip()
+            current_section_id = section_id_from_heading(
+                current_section_heading, template_sections
+            )
+            continue
+
+        if stripped.startswith("#"):
+            subgroup = stripped[1:].strip()
+            subgroup_section_id = section_id_from_heading(subgroup, template_sections)
+            if subgroup_section_id is not None:
+                current_section_heading = subgroup
+                current_section_id = subgroup_section_id
+            continue
+
+        if is_umh_song_line(stripped):
+            parsed = parse_umh_song_line(stripped)
+            parsed["mapped_section_id"] = current_section_id
+            parsed["mapped_section_heading"] = current_section_heading
+            parsed_song_rows.append(parsed)
+
+            row = find_row_by_umh(parsed["umh_number"])
+            if row:
+                song_item = build_song_item_from_row(row, section_id=current_section_id)
+                imported_items.append(song_item)
+            else:
+                missing_songs.append(parsed)
+
+    return imported_items, missing_songs, parsed_song_rows
 
 
 # =========================================================
@@ -1601,6 +1747,67 @@ with st.sidebar:
                 st.session_state["current_song_preview_stats"] = None
                 clear_service_outputs()
                 st.rerun()
+
+
+    with st.expander("4. Import Order of Service", expanded=False):
+        service_docx_file = st.file_uploader(
+            "Upload Order of Service (.docx)",
+            type=["docx"],
+            key="service_docx_importer",
+        )
+
+        replace_existing_setlist = st.checkbox(
+            "Replace current setlist",
+            value=False,
+            key="replace_setlist_from_docx",
+        )
+
+        if st.button("Import Songs from DOCX", use_container_width=True):
+            if service_docx_file is None:
+                st.warning("Please upload a .docx file first.")
+            else:
+                try:
+                    imported_items, missing_songs, parsed_song_rows = import_setlist_from_order_docx(
+                        service_docx_file,
+                        st.session_state.get("template_sections", []),
+                    )
+
+                    if replace_existing_setlist:
+                        st.session_state["setlist"] = imported_items
+                    else:
+                        st.session_state["setlist"].extend(imported_items)
+
+                    clear_service_outputs()
+
+                    st.session_state["editing_setlist_index"] = None
+                    st.session_state["pending_setlist_load"] = None
+                    st.session_state["setlist_selected_index"] = 0
+                    st.session_state["pending_setlist_selectbox_index"] = 0
+                    st.session_state["setlist_selectbox_sidebar"] = 0
+
+                    st.success(f"Imported {len(imported_items)} song(s) from DOCX.")
+
+                    if parsed_song_rows:
+                        st.caption("Parsed songs:")
+                        for i, song in enumerate(parsed_song_rows, start=1):
+                            sec_title = get_section_title_by_id(song.get("mapped_section_id"))
+                            sec_suffix = f" → {sec_title}" if sec_title else ""
+                            st.write(
+                                f"{i}. UMH {song['umh_number']} {song['title']}{sec_suffix}"
+                            )
+
+                    if missing_songs:
+                        st.warning(
+                            f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets."
+                        )
+                        for song in missing_songs:
+                            st.write(f"- UMH {song['umh_number']} {song['title']}")
+
+                    st.rerun()
+
+                except Exception as e:
+                    st.exception(e)
+
 
 
 # =========================================================
