@@ -319,7 +319,58 @@ def delete_slide_by_index(prs, slide_index: int):
     prs.part.drop_rel(rId)
     del prs.slides._sldIdLst[slide_index]
 
+# --- PATCH 1: replace simplify_heading_text with this version ---
+def simplify_heading_text(s: str) -> str:
+    s = str(s or "").replace("\u000b", " ")
+    s = normalize_text(s)
+    s = re.sub(r"\([^)]*\)", " ", s)
+    s = re.sub(r"[^a-z0-9& ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
+
+# --- PATCH 2: add this helper near your DOCX import helpers ---
+def pick_default_service_section(template_sections):
+    """
+    Choose the first meaningful service section instead of blindly using
+    template_sections[0]. This skips title/welcome-like sections.
+    """
+    if not template_sections:
+        return None
+
+    skip_canonicals = {
+        "welcome to mci",
+        "welcome",
+        "announcements",
+    }
+
+    preferred_canonicals = {
+        "call to worship",
+        "scripture reading",
+        "corporate prayer",
+        "sermon",
+        "response",
+        "benediction",
+        "tithe offering",
+        "tithes offerings",
+        "doxology",
+    }
+
+    # First pass: prefer obvious service anchors
+    for sec in template_sections:
+        canon = canonicalize_section_label(sec["title"])
+        if canon in preferred_canonicals:
+            return sec
+
+    # Second pass: first section not in skip list
+    for sec in template_sections:
+        canon = canonicalize_section_label(sec["title"])
+        if canon not in skip_canonicals:
+            return sec
+
+    # Final fallback
+    return template_sections[0]
+    
 # =========================================================
 # MOVE HELPERS
 # =========================================================
@@ -1054,14 +1105,14 @@ def import_setlist_from_order_docx(docx_file, template_sections):
         })
 
     # Create a fallback first block immediately
-    if template_sections:
-        first_sec = template_sections[0]
+    default_sec = pick_default_service_section(template_sections)
+    if default_sec:
         start_block(
-            first_sec["title"],
+            default_sec["title"],
             {
-                "section_id": first_sec["id"],
-                "section_title": first_sec["title"],
-                "match_type": "fallback-first",
+                "section_id": default_sec["id"],
+                "section_title": default_sec["title"],
+                "match_type": "fallback-default-service-section",
                 "score": 100,
             },
             "fallback",
