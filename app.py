@@ -428,14 +428,29 @@ def get_current_divider_positions(prs):
     return positions
 
 
+def canonicalize_section_label(s: str) -> str:
+    s = str(s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+
 def find_section_insert_index(prs, section_title: str):
     divider_positions = get_current_divider_positions(prs)
+    target_norm = canonicalize_section_label(section_title)
 
     match_index = None
     for idx, (_, title) in enumerate(divider_positions):
-        if title == section_title:
+        if canonicalize_section_label(title) == target_norm:
             match_index = idx
             break
+
+    if match_index is None:
+        for idx, (_, title) in enumerate(divider_positions):
+            title_norm = canonicalize_section_label(title)
+            if target_norm and (target_norm in title_norm or title_norm in target_norm):
+                match_index = idx
+                break
 
     if match_index is None:
         return len(prs.slides)
@@ -574,71 +589,17 @@ def format_song_label(song, idx=None):
 
 
 def build_template_service_order_view(setlist):
-    service_order_blocks = st.session_state.get("service_order_blocks", []) or []
-    if service_order_blocks:
-        uid_lookup = {}
-        for idx, song in enumerate(setlist):
-            import_uid = song.get("import_uid")
-            if import_uid:
-                uid_lookup[import_uid] = (idx, song)
-
-        groups = []
-        for block in service_order_blocks:
-            rendered_items = []
-            for item in block.get("items", []):
-                if item.get("type") == "song":
-                    ref = uid_lookup.get(item.get("import_uid"))
-                    if ref is not None:
-                        idx, song = ref
-                        rendered_items.append({
-                            "type": "song",
-                            "index": idx,
-                            "song": song,
-                        })
-                else:
-                    rendered_items.append(item)
-
-            groups.append({
-                "section_id": block.get("section_id"),
-                "section_title": block.get("section_title", "Untitled Section"),
-                "source_heading": block.get("source_heading"),
-                "items": rendered_items,
-            })
-
-        # include songs not represented in imported blocks
-        used_uids = {
-            item.get("import_uid")
-            for block in service_order_blocks
-            for item in block.get("items", [])
-            if item.get("type") == "song" and item.get("import_uid")
-        }
-        extras = []
-        for idx, song in enumerate(setlist):
-            uid = song.get("import_uid")
-            if uid and uid in used_uids:
-                continue
-            extras.append({"type": "song", "index": idx, "song": song})
-
-        if extras:
-            groups.append({
-                "section_id": None,
-                "section_title": "Additional Songs",
-                "source_heading": None,
-                "items": extras,
-            })
-
-        return groups
-
-    sections = st.session_state.get("template_sections", [])
+    sections = st.session_state.get("template_sections", []) or []
     songs_by_section = {sec["id"]: [] for sec in sections}
     unassigned = []
 
     for idx, song in enumerate(setlist):
         sec_id = song.get("section_id")
+        entry = {"type": "song", "index": idx, "song": song}
         if sec_id in songs_by_section:
-            songs_by_section[sec_id].append({"type": "song", "index": idx, "song": song})
+            songs_by_section[sec_id].append(entry)
         else:
-            unassigned.append({"type": "song", "index": idx, "song": song})
+            unassigned.append(entry)
 
     service_groups = []
     for sec in sections:
@@ -658,33 +619,26 @@ def build_template_service_order_view(setlist):
     return service_groups
 
 
+
 def render_service_group_items_markdown(group, selected_index=None, editing_index=None):
     items = group.get("items", [])
-    if not items:
-        return
 
     st.markdown(f"**{group['section_title']}**")
     for item in items:
-        if item.get("type") == "song":
-            i = item["index"]
-            song = item["song"]
-            label = format_song_label(song, i)
-            prefix = ""
-            if selected_index is not None and i == selected_index:
-                prefix += "🔹 "
-            if editing_index is not None and i == editing_index:
-                prefix += "✏️ "
-            if prefix:
-                st.markdown(f"&nbsp;&nbsp;**{prefix}{label}**", unsafe_allow_html=True)
-            else:
-                st.markdown(f"&nbsp;&nbsp;{label}", unsafe_allow_html=True)
-        elif item.get("type") == "minor_heading":
-            st.markdown(f"&nbsp;&nbsp;_{item.get('text', '')}_", unsafe_allow_html=True)
-        elif item.get("type") == "text":
-            text = item.get("text", "")
-            if text:
-                st.markdown(f"&nbsp;&nbsp;{text}", unsafe_allow_html=True)
-
+        if item.get("type") != "song":
+            continue
+        i = item["index"]
+        song = item["song"]
+        label = format_song_label(song, i)
+        prefix = ""
+        if selected_index is not None and i == selected_index:
+            prefix += "🔹 "
+        if editing_index is not None and i == editing_index:
+            prefix += "✏️ "
+        if prefix:
+            st.markdown(f"&nbsp;&nbsp;**{prefix}{label}**", unsafe_allow_html=True)
+        else:
+            st.markdown(f"&nbsp;&nbsp;{label}", unsafe_allow_html=True)
 
 def render_service_group_items_caption(group):
     items = group.get("items", [])
@@ -1120,17 +1074,21 @@ def import_setlist_from_order_docx(docx_file, template_sections):
         if not stripped:
             continue
 
-        heading_text = stripped[1:].strip() if stripped.startswith(("+", "#")) else stripped
+        is_prefixed_heading = stripped.startswith(("+", "#"))
+        heading_text = stripped[1:].strip() if is_prefixed_heading else stripped
         heading_match = None
-        if should_treat_docx_line_as_anchor(stripped):
+
+        # Major blocks are started only by plain DOCX headings that strongly match
+        # a template section. Prefixed headings like + Songs of Praise or
+        # # Hymns of Praise remain nested inside the current major block.
+        if not is_prefixed_heading and should_treat_docx_line_as_anchor(stripped):
             heading_match = match_template_section_from_heading(heading_text, template_sections)
 
-        # Only strong template matches become new major blocks.
         if heading_match and heading_match["score"] >= 88:
-            start_block(heading_text, heading_match, "prefixed" if stripped.startswith(("+", "#")) else "plain")
+            start_block(heading_text, heading_match, "plain")
             continue
 
-        if stripped.startswith("+") or stripped.startswith("#"):
+        if is_prefixed_heading:
             add_non_song_item({
                 "type": "minor_heading",
                 "text": heading_text,
@@ -1722,8 +1680,6 @@ with st.sidebar:
         st.session_state["setlist_selected_index"] = selected_index
 
         for group in build_template_service_order_view(setlist):
-            if not group["items"]:
-                continue
             render_service_group_items_markdown(
                 group,
                 selected_index=selected_index,
