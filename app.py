@@ -559,6 +559,37 @@ def group_songs_by_section_order(setlist):
     return ordered_groups
 
 
+
+
+def build_template_service_order_view(setlist):
+    sections = st.session_state.get("template_sections", [])
+    songs_by_section = {sec["id"]: [] for sec in sections}
+    unassigned = []
+
+    for idx, song in enumerate(setlist):
+        sec_id = song.get("section_id")
+        if sec_id in songs_by_section:
+            songs_by_section[sec_id].append((idx, song))
+        else:
+            unassigned.append((idx, song))
+
+    service_groups = []
+    for sec in sections:
+        service_groups.append({
+            "section_id": sec["id"],
+            "section_title": sec["title"],
+            "items": songs_by_section.get(sec["id"], []),
+        })
+
+    if unassigned:
+        service_groups.append({
+            "section_id": None,
+            "section_title": "Unassigned Songs",
+            "items": unassigned,
+        })
+
+    return service_groups
+
 def reset_editor():
     st.session_state["loaded_song"] = None
     st.session_state["editing_setlist_index"] = None
@@ -1497,7 +1528,7 @@ else:
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.markdown("### Setlist Order")
+    st.markdown("### Service Order")
 
     setlist = st.session_state["setlist"]
 
@@ -1510,27 +1541,31 @@ with st.sidebar:
         selected_index = max(0, min(selected_index, len(setlist) - 1))
         st.session_state["setlist_selected_index"] = selected_index
 
-        for i, song in enumerate(setlist):
-            is_selected = i == selected_index
-            is_editing = i == editing_index
-            section_title = get_section_title_by_id(song.get("section_id"))
-            section_suffix = f" [{section_title}]" if section_title else ""
+        for group in build_template_service_order_view(setlist):
+            items = group["items"]
+            if not items:
+                continue
 
-            if song["umh_number"]:
-                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}{section_suffix}'
-            else:
-                label = f'{i+1}. {song["title"]}{section_suffix}'
+            st.markdown(f"**{group['section_title']}**")
+            for i, song in items:
+                is_selected = i == selected_index
+                is_editing = i == editing_index
 
-            prefix = ""
-            if is_selected:
-                prefix += "🔹 "
-            if is_editing:
-                prefix += "✏️ "
+                if song["umh_number"]:
+                    label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}'
+                else:
+                    label = f'{i+1}. {song["title"]}'
 
-            if prefix:
-                st.markdown(f"**{prefix}{label}**")
-            else:
-                st.markdown(label)
+                prefix = ""
+                if is_selected:
+                    prefix += "🔹 "
+                if is_editing:
+                    prefix += "✏️ "
+
+                if prefix:
+                    st.markdown(f"&nbsp;&nbsp;**{prefix}{label}**", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"&nbsp;&nbsp;{label}", unsafe_allow_html=True)
 
     st.divider()
 
@@ -1706,12 +1741,24 @@ with st.sidebar:
             elif keyword.strip():
                 st.info("No matching titles found.")
 
-    with st.expander("3. Setlist", expanded=True):
+    with st.expander("3. Service Order", expanded=True):
         setlist = st.session_state["setlist"]
 
         if not setlist:
             st.info("No songs added yet.")
         else:
+            st.markdown("#### Grouped by Template Section")
+            for group in build_template_service_order_view(setlist):
+                items = group["items"]
+                if not items:
+                    continue
+                st.markdown(f"**{group['section_title']}**")
+                for i, song in items:
+                    title = f'UMH {song["umh_number"]} {song["title"]}'.strip() if song["umh_number"] else song["title"]
+                    st.caption(f"{i+1}. {title} ({len(song['slides'])} slide(s))")
+
+            st.divider()
+            st.markdown("#### Song Selection")
             labels = []
             for i, song in enumerate(setlist):
                 section_title = get_section_title_by_id(song.get("section_id"))
@@ -1883,6 +1930,7 @@ with st.sidebar:
             value=False,
             key="replace_setlist_from_docx",
         )
+        st.caption("Template sections remain the source of truth. DOCX headings are only used to route songs into the best matching template section.")
 
         if st.button("Import Songs from DOCX", use_container_width=True):
             if service_docx_file is None:
@@ -1906,7 +1954,7 @@ with st.sidebar:
                     st.session_state["setlist_selected_index"] = 0
                     st.session_state["pending_setlist_selectbox_index"] = 0
 
-                    st.success(f"Imported {len(imported_items)} song(s) from DOCX.")
+                    st.success(f"Imported {len(imported_items)} song(s) into the template-driven service order.")
 
                     if section_mapping_rows:
                         st.caption("Section mapping:")
