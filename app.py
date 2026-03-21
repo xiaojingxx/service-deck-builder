@@ -837,10 +837,15 @@ def create_single_song_ppt(song_item, template_bytes: bytes):
 # PREVIEW HELPERS
 # =========================================================
 def pptx_to_preview_images(pptx_bytes: BytesIO):
+
     with tempfile.TemporaryDirectory() as tmpdir:
         pptx_path = os.path.join(tmpdir, "preview.pptx")
 
         with open(pptx_path, "wb") as f:
+            f.write(pptx_bytes.getvalue())
+
+        debug_pptx_path = "/tmp/debug_generated_preview.pptx"
+        with open(debug_pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
         cmd = [
