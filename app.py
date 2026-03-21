@@ -921,6 +921,26 @@ def build_song_item_from_row(row, section_id=None):
 
 
 
+def should_treat_docx_line_as_anchor(line: str) -> bool:
+    stripped = str(line or "").strip()
+    if not stripped:
+        return False
+    if is_umh_song_line(stripped):
+        return False
+    if stripped.startswith("+") or stripped.startswith("#"):
+        return True
+
+    # Allow plain section titles from the DOCX to act as range anchors.
+    # This lets the importer map everything between major headings like
+    # Call to Worship -> Scripture Reading -> Corporate Prayer.
+    word_count = len(stripped.split())
+    has_sentence_punctuation = any(ch in stripped for ch in [":", ";", ".", "?", "!"])
+    if word_count <= 6 and not has_sentence_punctuation:
+        return True
+    return False
+
+
+
 def import_setlist_from_order_docx(docx_file, template_sections):
     """
     Returns:
@@ -928,6 +948,11 @@ def import_setlist_from_order_docx(docx_file, template_sections):
       missing_songs: list[dict]
       parsed_song_rows: list[dict]
       section_mapping_rows: list[dict]
+
+    Mapping behavior:
+    - The uploaded template section headers are the source of truth.
+    - DOCX headings are used only as anchors to switch the current target template section.
+    - Every song is assigned to the most recently matched template anchor section.
     """
     lines = read_docx_lines(docx_file)
 
@@ -939,41 +964,44 @@ def import_setlist_from_order_docx(docx_file, template_sections):
     current_section_heading = None
     current_section_match = None
 
+    def register_anchor(docx_heading: str, source: str):
+        nonlocal current_section_heading, current_section_match
+        match = match_template_section_from_heading(docx_heading, template_sections)
+        section_mapping_rows.append({
+            "docx_heading": docx_heading,
+            "mapped_section_id": match["section_id"] if match else None,
+            "mapped_section_title": match["section_title"] if match else None,
+            "match_type": match["match_type"] if match else "unmatched",
+            "score": match["score"] if match else 0,
+            "source": source,
+        })
+        if match:
+            current_section_heading = docx_heading
+            current_section_match = match
+        return match
+
     for line in lines:
         stripped = line.strip()
+        if not stripped:
+            continue
 
         if stripped.startswith("+"):
-            current_section_heading = stripped[1:].strip()
-            current_section_match = match_template_section_from_heading(
-                current_section_heading, template_sections
-            )
-            section_mapping_rows.append({
-                "docx_heading": current_section_heading,
-                "mapped_section_id": current_section_match["section_id"] if current_section_match else None,
-                "mapped_section_title": current_section_match["section_title"] if current_section_match else None,
-                "match_type": current_section_match["match_type"] if current_section_match else "unmatched",
-                "score": current_section_match["score"] if current_section_match else 0,
-                "source": "+",
-            })
+            register_anchor(stripped[1:].strip(), "+")
             continue
 
         if stripped.startswith("#"):
             subgroup = stripped[1:].strip()
-            subgroup_match = match_template_section_from_heading(subgroup, template_sections)
-            section_mapping_rows.append({
-                "docx_heading": subgroup,
-                "mapped_section_id": subgroup_match["section_id"] if subgroup_match else None,
-                "mapped_section_title": subgroup_match["section_title"] if subgroup_match else None,
-                "match_type": subgroup_match["match_type"] if subgroup_match else "unmatched",
-                "score": subgroup_match["score"] if subgroup_match else 0,
-                "source": "#",
-            })
-            if subgroup_match and (
-                current_section_match is None or subgroup_match["score"] >= current_section_match["score"]
-            ):
+            subgroup_match = register_anchor(subgroup, "#")
+            if subgroup_match and current_section_match is not None and subgroup_match["score"] >= current_section_match["score"]:
                 current_section_heading = subgroup
                 current_section_match = subgroup_match
             continue
+
+        if should_treat_docx_line_as_anchor(stripped):
+            plain_match = match_template_section_from_heading(stripped, template_sections)
+            if plain_match:
+                register_anchor(stripped, "plain")
+                continue
 
         if is_umh_song_line(stripped):
             parsed = parse_umh_song_line(stripped)
