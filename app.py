@@ -843,6 +843,11 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
+        # DEBUG: confirm PPTX was written
+        st.write("Saved PPTX path:", pptx_path)
+        st.write("PPTX exists:", os.path.exists(pptx_path))
+        st.write("PPTX size (bytes):", os.path.getsize(pptx_path))
+
         cmd = [
             SOFFICE_PATH,
             "--headless",
@@ -853,8 +858,17 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
+        # DEBUG: show LibreOffice result
+        st.write("SOFFICE command:", cmd)
+        st.write("SOFFICE return code:", result.returncode)
+        st.write("SOFFICE stdout:", result.stdout)
+        st.write("SOFFICE stderr:", result.stderr)
+
         if result.returncode != 0:
             raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
+
+        # DEBUG: inspect temp directory after conversion
+        st.write("Files in temp dir after conversion:", os.listdir(tmpdir))
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
@@ -862,10 +876,14 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
 
+        # DEBUG: confirm PDF path
+        st.write("PDF path:", pdf_path)
+        st.write("PDF exists:", os.path.exists(pdf_path))
+        st.write("PDF size (bytes):", os.path.getsize(pdf_path))
+
         try:
             doc = fitz.open(pdf_path)
 
-            # Clean / repair the PDF in memory if MuPDF can recover it.
             repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
             doc.close()
 
@@ -877,7 +895,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         images = []
         try:
             for page in doc:
-                pix = page.get_pixmap(dpi=60)
+                pix = page.get_pixmap(dpi=100)
                 mode = "RGB" if pix.alpha == 0 else "RGBA"
                 img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
 
@@ -890,7 +908,7 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
                 )
 
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=45, optimize=True)
+                img.save(buffer, format="JPEG", quality=70, optimize=True)
                 images.append(buffer.getvalue())
         finally:
             doc.close()
