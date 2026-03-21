@@ -96,6 +96,7 @@ DEFAULTS = {
     "current_song_preview_stats": None,
     "service_preview_images": None,
     "service_preview_stats": None,
+    "service_preview_error": None,
     "service_song_start_slides": [],
     "ppt_data": None,
     "last_split_settings": None,
@@ -126,6 +127,7 @@ def clear_service_outputs():
     st.session_state["ppt_data"] = None
     st.session_state["service_preview_images"] = None
     st.session_state["service_preview_stats"] = None
+    st.session_state["service_preview_error"] = None
     st.session_state["service_song_start_slides"] = []
 
 
@@ -333,10 +335,6 @@ def move_slide(prs, from_idx: int, to_idx: int):
 
 
 def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
-    """
-    Move a contiguous block of slides [start_idx, end_idx] so that the block
-    starts at target_idx, preserving the original order of the block.
-    """
     sldIdLst = prs.slides._sldIdLst
 
     if start_idx > end_idx:
@@ -718,12 +716,7 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
 
         if i == 0:
             slide = prs.slides.add_slide(first_layout)
-            set_shape_text(
-                slide.shapes.title,
-                full_title,
-                font_size_pt=None,
-                line_spacing=None,
-            )
+            set_shape_text(slide.shapes.title, full_title)
             set_shape_text(
                 get_body_placeholder(slide),
                 lyrics_text,
@@ -843,11 +836,6 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
-        # DEBUG: confirm PPTX was written
-        st.write("Saved PPTX path:", pptx_path)
-        st.write("PPTX exists:", os.path.exists(pptx_path))
-        st.write("PPTX size (bytes):", os.path.getsize(pptx_path))
-
         cmd = [
             SOFFICE_PATH,
             "--headless",
@@ -858,72 +846,78 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        # DEBUG: show LibreOffice result
-        st.write("SOFFICE command:", cmd)
-        st.write("SOFFICE return code:", result.returncode)
-        st.write("SOFFICE stdout:", result.stdout)
-        st.write("SOFFICE stderr:", result.stderr)
+        stderr_text = (result.stderr or "").strip().lower()
 
-        if result.returncode != 0:
-            raise RuntimeError("Preview conversion failed. Please check LibreOffice/soffice setup.")
-
-        # DEBUG: inspect temp directory after conversion
-        st.write("Files in temp dir after conversion:", os.listdir(tmpdir))
+        if (
+            result.returncode != 0
+            or "source file could not be loaded" in stderr_text
+            or "error:" in stderr_text
+        ):
+            raise RuntimeError(
+                "Preview conversion failed.\n"
+                f"Return code: {result.returncode}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
         if not pdf_files:
-            raise FileNotFoundError("Preview PDF was not created.")
+            raise FileNotFoundError(
+                "Preview PDF was not created.\n"
+                f"Files in temp dir: {os.listdir(tmpdir)}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
 
         pdf_path = os.path.join(tmpdir, pdf_files[0])
 
-        # DEBUG: confirm PDF path
-        st.write("PDF path:", pdf_path)
-        st.write("PDF exists:", os.path.exists(pdf_path))
-        st.write("PDF size (bytes):", os.path.getsize(pdf_path))
-
         try:
             doc = fitz.open(pdf_path)
-
             repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
             doc.close()
-
             doc = fitz.open(stream=repaired_bytes, filetype="pdf")
-
         except Exception as e:
             raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
 
         images = []
         try:
             for page in doc:
-                pix = page.get_pixmap(dpi=100)
-                mode = "RGB" if pix.alpha == 0 else "RGBA"
-                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-
-                if mode == "RGBA":
-                    img = img.convert("RGB")
-
-                img = img.resize(
-                    (int(pix.width * 0.7), int(pix.height * 0.7)),
-                    Image.LANCZOS,
-                )
+                pix = page.get_pixmap(dpi=60, alpha=False)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
                 buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
+                img.save(buffer, format="JPEG", quality=45, optimize=True)
                 images.append(buffer.getvalue())
+
+                buffer.close()
+                del pix
+                del img
+                del buffer
         finally:
             doc.close()
 
         return images
 
+
 def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
 
+    if "source file could not be loaded" in msg:
+        return (
+            "LibreOffice could not open the generated PowerPoint preview file. "
+            "This usually means the combined PPTX structure is invalid for LibreOffice."
+        )
+
     if "Preview conversion failed" in msg:
-        return msg
+        return "Preview conversion failed."
+
     if "Preview PDF was not created" in msg:
-        return msg
+        return "Preview PDF was not created."
+
     if "No common ancestor in structure tree" in msg:
-        return "Preview generation failed because the generated PDF structure is malformed. The app tried to repair it, but PyMuPDF still could not render it."
+        return (
+            "Preview generation failed because the generated PDF structure is malformed."
+        )
 
     return f"Preview generation failed: {msg}"
 
@@ -1150,20 +1144,28 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 def refresh_service_preview(setlist, template_bytes):
     st.session_state["service_preview_images"] = None
     st.session_state["service_preview_stats"] = None
+    st.session_state["service_preview_error"] = None
     st.session_state["ppt_data"] = None
 
     ppt_data = create_combined_ppt(setlist, template_bytes)
-    preview_images = pptx_to_preview_images(ppt_data)
-
-    if not preview_images:
-        raise RuntimeError("No preview images generated from service PPT")
-
     st.session_state["ppt_data"] = ppt_data
-    st.session_state["service_preview_images"] = preview_images
-    st.session_state["service_preview_stats"] = preview_stats(preview_images)
     st.session_state["service_song_start_slides"] = get_service_song_start_slides(
         setlist, template_bytes
     )
+
+    try:
+        preview_images = pptx_to_preview_images(ppt_data)
+
+        if not preview_images:
+            raise RuntimeError("No preview images generated from service PPT")
+
+        st.session_state["service_preview_images"] = preview_images
+        st.session_state["service_preview_stats"] = preview_stats(preview_images)
+
+    except Exception as e:
+        st.session_state["service_preview_images"] = None
+        st.session_state["service_preview_stats"] = None
+        st.session_state["service_preview_error"] = preview_error_message(e)
 
 
 def selected_template_info():
@@ -1749,7 +1751,6 @@ with main_left:
             if detected_slide is not None:
                 st.session_state["current_preview_slide"] = detected_slide
 
-    # Auto preview disabled to reduce memory usage.
     st.session_state["last_editor_text"] = editor_text
     st.session_state["last_split_settings"] = current_split_settings
 
@@ -1942,7 +1943,7 @@ with main_right:
                         selected_template_bytes,
                     )
                 except Exception as e:
-                    st.error(preview_error_message(e))
+                    st.error(f"PowerPoint generation failed: {e}")
 
             starts = st.session_state.get("service_song_start_slides", [])
             selected_index = st.session_state.get("setlist_selected_index", 0)
@@ -1951,6 +1952,12 @@ with main_right:
                 st.session_state["current_preview_slide"] = starts[selected_index]
             else:
                 st.session_state["current_preview_slide"] = 1
+
+            if st.session_state.get("service_preview_error"):
+                st.warning(
+                    "Preview could not be generated, but the PowerPoint file is available for download.\n\n"
+                    + st.session_state["service_preview_error"]
+                )
 
             preview_images = st.session_state.get("service_preview_images")
 
