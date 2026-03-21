@@ -2150,8 +2150,6 @@ with st.sidebar:
                     st.exception(e)
 
 
-
-with st.sidebar:
     with st.expander("5. Imported Text Items", expanded=False):
         generated_items = st.session_state.get("generated_service_items", [])
 
