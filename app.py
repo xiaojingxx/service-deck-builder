@@ -2519,3 +2519,5 @@ with main_right:
         )
     else:
         st.info("Preview will appear here.")
+
+st.write(st.session_state["template_sections"])
