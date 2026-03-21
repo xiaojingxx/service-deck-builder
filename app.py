@@ -18,7 +18,11 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
-from docx import Document
+try:
+    from docx import Document
+except Exception:
+    Document = None
+
 
 
 # =========================================================
@@ -109,6 +113,7 @@ DEFAULTS = {
     "selected_song_section_id": None,
     "setlist_selectbox_sidebar": 0,
     "pending_setlist_selectbox_index": None,
+    "generated_service_items": [],
 }
 
 for key, value in DEFAULTS.items():
@@ -131,6 +136,38 @@ def clear_service_outputs():
     st.session_state["service_preview_stats"] = None
     st.session_state["service_preview_error"] = None
     st.session_state["service_song_start_slides"] = []
+
+
+def require_docx_support():
+    if Document is None:
+        raise ImportError(
+            "DOCX import requires the python-docx package. Install python-docx and remove the old docx package if present."
+        )
+
+
+def next_service_flow_order():
+    max_order = -1
+    for song in st.session_state.get("setlist", []):
+        order = song.get("flow_order")
+        if isinstance(order, int):
+            max_order = max(max_order, order)
+    for item in st.session_state.get("generated_service_items", []):
+        order = item.get("flow_order")
+        if isinstance(order, int):
+            max_order = max(max_order, order)
+    return max_order + 1
+
+
+def normalize_flow_orders():
+    entries = []
+    for song in st.session_state.get("setlist", []):
+        entries.append((song.get("flow_order", 10**9), song))
+    for item in st.session_state.get("generated_service_items", []):
+        entries.append((item.get("flow_order", 10**9), item))
+
+    entries.sort(key=lambda x: x[0])
+    for new_order, (_, entry) in enumerate(entries):
+        entry["flow_order"] = new_order
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -711,7 +748,39 @@ DOCX_SECTION_ALIASES = {
     "songs of praise": ["songs of praise", "hymns of praise", "opening song", "opening songs"],
     "closing song": ["closing song", "closing hymn", "closing hymns"],
     "gloria patri": ["gloria patri"],
+    "call to worship": ["call to worship"],
+    "scripture reading": ["scripture reading"],
+    "sermon": ["sermon"],
+    "benediction": ["benediction"],
+    "corporate prayer": ["corporate prayer"],
+    "the lord’s prayer": ["the lord’s prayer", "the lord's prayer"],
+    "welcome & announcements": ["welcome & announcements", "welcome and announcements"],
+    "tithes & offerings": ["tithes & offerings", "tithes and offerings"],
+    "doxology": ["doxology"],
 }
+
+TEXT_BODY_HEADINGS = {
+    "call to worship",
+}
+
+TEXT_SINGLE_LINE_HEADINGS = {
+    "scripture reading",
+    "sermon",
+}
+
+TEXT_TITLE_ONLY_HEADINGS = {
+    "benediction",
+    "corporate prayer",
+    "the lord’s prayer",
+    "the lord's prayer",
+    "welcome & announcements",
+    "welcome and announcements",
+    "tithes & offerings",
+    "tithes and offerings",
+    "doxology",
+}
+
+IGNORED_DOCX_LINES = {"cs only", "ts only"}
 
 
 def normalize_text(s: str) -> str:
@@ -719,6 +788,7 @@ def normalize_text(s: str) -> str:
 
 
 def read_docx_lines(docx_file) -> list[str]:
+    require_docx_support()
     doc = Document(docx_file)
     lines = []
     for para in doc.paragraphs:
@@ -758,11 +828,7 @@ def section_id_from_heading(heading: str, template_sections: list[dict]) -> str 
 
     for sec in template_sections:
         sec_title_norm = normalize_text(sec["title"])
-        if (
-            heading_norm == sec_title_norm
-            or heading_norm in sec_title_norm
-            or sec_title_norm in heading_norm
-        ):
+        if heading_norm == sec_title_norm or heading_norm in sec_title_norm or sec_title_norm in heading_norm:
             return sec["id"]
 
     for sec in template_sections:
@@ -776,7 +842,23 @@ def section_id_from_heading(heading: str, template_sections: list[dict]) -> str 
     return None
 
 
-def build_song_item_from_row(row, section_id=None):
+def is_docx_service_heading(line: str) -> bool:
+    norm = normalize_text(line)
+    return norm in TEXT_BODY_HEADINGS or norm in TEXT_SINGLE_LINE_HEADINGS or norm in TEXT_TITLE_ONLY_HEADINGS or norm in DOCX_SECTION_ALIASES
+
+
+def is_docx_control_line(line: str) -> bool:
+    stripped = line.strip()
+    return (
+        not stripped
+        or stripped.startswith("+")
+        or stripped.startswith("#")
+        or is_umh_song_line(stripped)
+        or is_docx_service_heading(stripped)
+    )
+
+
+def build_song_item_from_row(row, section_id=None, flow_order=None):
     lyrics_raw = str(row.get("Lyrics (Raw)", "")).strip()
     slides = split_slides_manual(lyrics_raw)
 
@@ -789,33 +871,56 @@ def build_song_item_from_row(row, section_id=None):
         "override_lyrics_font_size": False,
         "override_line_spacing": False,
         "section_id": section_id,
+        "flow_order": flow_order if flow_order is not None else next_service_flow_order(),
     }
 
 
-def import_setlist_from_order_docx(docx_file, template_sections):
+def make_generated_service_item(title, section_id=None, body_lines=None, flow_order=None, source_heading=None):
+    body_lines = [line.strip() for line in (body_lines or []) if str(line).strip()]
+    return {
+        "title": str(title or "").strip(),
+        "section_id": section_id,
+        "body_lines": body_lines,
+        "render_mode": "body" if body_lines else "title",
+        "flow_order": flow_order if flow_order is not None else next_service_flow_order(),
+        "source_heading": source_heading or title,
+    }
+
+
+def import_setlist_from_order_docx(docx_file, template_sections, import_non_song_items=True):
     """
     Returns:
       imported_items: list[dict]
       missing_songs: list[dict]
       parsed_song_rows: list[dict]
+      generated_items: list[dict]
+      parsed_text_rows: list[dict]
     """
     lines = read_docx_lines(docx_file)
 
     imported_items = []
     missing_songs = []
     parsed_song_rows = []
+    generated_items = []
+    parsed_text_rows = []
 
     current_section_heading = None
     current_section_id = None
+    flow_order = next_service_flow_order()
 
-    for line in lines:
-        stripped = line.strip()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        norm = normalize_text(stripped)
+
+        if norm in IGNORED_DOCX_LINES:
+            i += 1
+            continue
 
         if stripped.startswith("+"):
             current_section_heading = stripped[1:].strip()
-            current_section_id = section_id_from_heading(
-                current_section_heading, template_sections
-            )
+            current_section_id = section_id_from_heading(current_section_heading, template_sections)
+            i += 1
             continue
 
         if stripped.startswith("#"):
@@ -824,6 +929,7 @@ def import_setlist_from_order_docx(docx_file, template_sections):
             if subgroup_section_id is not None:
                 current_section_heading = subgroup
                 current_section_id = subgroup_section_id
+            i += 1
             continue
 
         if is_umh_song_line(stripped):
@@ -834,12 +940,60 @@ def import_setlist_from_order_docx(docx_file, template_sections):
 
             row = find_row_by_umh(parsed["umh_number"])
             if row:
-                song_item = build_song_item_from_row(row, section_id=current_section_id)
-                imported_items.append(song_item)
+                imported_items.append(build_song_item_from_row(row, section_id=current_section_id, flow_order=flow_order))
             else:
                 missing_songs.append(parsed)
+            flow_order += 1
+            i += 1
+            continue
 
-    return imported_items, missing_songs, parsed_song_rows
+        if norm in TEXT_BODY_HEADINGS or norm in TEXT_SINGLE_LINE_HEADINGS or norm in TEXT_TITLE_ONLY_HEADINGS:
+            heading_section_id = section_id_from_heading(stripped, template_sections) or current_section_id
+            current_section_heading = stripped
+            current_section_id = heading_section_id
+
+            if norm in TEXT_BODY_HEADINGS:
+                body_lines = []
+                j = i + 1
+                while j < len(lines):
+                    nxt = lines[j].strip()
+                    if is_docx_control_line(nxt):
+                        break
+                    body_lines.append(nxt)
+                    j += 1
+
+                if import_non_song_items:
+                    generated_items.append(make_generated_service_item(stripped, section_id=heading_section_id, body_lines=body_lines, flow_order=flow_order, source_heading=stripped))
+                    parsed_text_rows.append({"title": stripped, "body_lines": body_lines, "mapped_section_id": heading_section_id})
+                    flow_order += 1
+                i = j
+                continue
+
+            if norm in TEXT_SINGLE_LINE_HEADINGS:
+                body_lines = []
+                if i + 1 < len(lines):
+                    nxt = lines[i + 1].strip()
+                    if nxt and not is_docx_control_line(nxt):
+                        body_lines = [nxt]
+                        i += 1
+
+                if import_non_song_items:
+                    generated_items.append(make_generated_service_item(stripped, section_id=heading_section_id, body_lines=body_lines, flow_order=flow_order, source_heading=stripped))
+                    parsed_text_rows.append({"title": stripped, "body_lines": body_lines, "mapped_section_id": heading_section_id})
+                    flow_order += 1
+                i += 1
+                continue
+
+            if import_non_song_items:
+                generated_items.append(make_generated_service_item(stripped, section_id=heading_section_id, body_lines=[], flow_order=flow_order, source_heading=stripped))
+                parsed_text_rows.append({"title": stripped, "body_lines": [], "mapped_section_id": heading_section_id})
+                flow_order += 1
+            i += 1
+            continue
+
+        i += 1
+
+    return imported_items, missing_songs, parsed_song_rows, generated_items, parsed_text_rows
 
 
 # =========================================================
@@ -882,10 +1036,85 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
     return start_idx, end_idx
 
 
-def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout):
+def chunk_generated_body_lines(body_lines, max_lines_per_slide=6):
+    chunks = []
+    current = []
+    for line in body_lines or []:
+        current.append(line)
+        if len(current) >= max_lines_per_slide:
+            chunks.append(current)
+            current = []
+    if current:
+        chunks.append(current)
+    return chunks or [[]]
+
+
+def add_generated_text_item_to_prs(prs, item, first_layout, rest_layout, divider_layout=None):
     start_idx = len(prs.slides)
-    for _, song in section_song_pairs:
-        add_song_block_to_prs(prs, song, first_layout, rest_layout)
+    title = str(item.get("title", "")).strip()
+    body_lines = [line for line in item.get("body_lines", []) if str(line).strip()]
+
+    if not body_lines:
+        layout = divider_layout or first_layout
+        slide = prs.slides.add_slide(layout)
+        set_shape_text(slide.shapes.title, title)
+        body = get_body_placeholder(slide)
+        if body is not None:
+            set_shape_text(body, "")
+        return start_idx, len(prs.slides) - 1
+
+    chunks = chunk_generated_body_lines(body_lines)
+    for idx, chunk in enumerate(chunks):
+        slide = prs.slides.add_slide(first_layout if idx == 0 else rest_layout)
+        if slide.shapes.title is not None:
+            set_shape_text(slide.shapes.title, title)
+        set_shape_text(get_body_placeholder(slide), "\n".join(chunk))
+
+    return start_idx, len(prs.slides) - 1
+
+
+def build_ordered_service_entries(setlist, generated_items):
+    sections = st.session_state.get("template_sections", [])
+    by_section = {sec["id"]: [] for sec in sections}
+    unassigned = []
+
+    for idx, song in enumerate(setlist):
+        order = song.get("flow_order", idx)
+        payload = (order, "song", idx, song)
+        sec_id = song.get("section_id")
+        if sec_id in by_section:
+            by_section[sec_id].append(payload)
+        else:
+            unassigned.append(payload)
+
+    for idx, item in enumerate(generated_items or []):
+        order = item.get("flow_order", 100000 + idx)
+        payload = (order, "generated", idx, item)
+        sec_id = item.get("section_id")
+        if sec_id in by_section:
+            by_section[sec_id].append(payload)
+        else:
+            unassigned.append(payload)
+
+    ordered_groups = []
+    for sec in sections:
+        entries = sorted(by_section.get(sec["id"], []), key=lambda x: x[0])
+        if entries:
+            ordered_groups.append((sec["id"], sec["title"], entries))
+
+    if unassigned:
+        ordered_groups.append((None, None, sorted(unassigned, key=lambda x: x[0])))
+
+    return ordered_groups
+
+
+def add_service_entry_block_to_prs(prs, section_entries, first_layout, rest_layout, divider_layout=None):
+    start_idx = len(prs.slides)
+    for _, entry_type, _, payload in section_entries:
+        if entry_type == "song":
+            add_song_block_to_prs(prs, payload, first_layout, rest_layout)
+        else:
+            add_generated_text_item_to_prs(prs, payload, first_layout, rest_layout, divider_layout=divider_layout)
     end_idx = len(prs.slides) - 1
     return start_idx, end_idx
 
@@ -895,13 +1124,15 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
     rest_layout = get_layout_by_name(prs, REST_LAYOUT_NAME)
+    divider_layout = get_layout_by_name(prs, DIVIDER_LAYOUT_NAME)
 
     if first_layout is None or rest_layout is None:
         raise ValueError("Template layouts not found.")
 
     output_mode = st.session_state.get("service_output_mode", "full")
+    generated_items = st.session_state.get("generated_service_items", [])
     ordered_songs = get_ordered_songs_for_output(setlist)
-    grouped_sections = group_songs_by_section_order(setlist)
+    grouped_entries = build_ordered_service_entries(setlist, generated_items)
 
     if output_mode == "songs":
         delete_all_slides(prs)
@@ -915,8 +1146,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
-        for _, song in ordered_songs:
-            add_song_block_to_prs(prs, song, first_layout, rest_layout)
+        for _, _, entries in grouped_entries:
+            add_service_entry_block_to_prs(prs, entries, first_layout, rest_layout, divider_layout=divider_layout)
 
         output = BytesIO()
         prs.save(output)
@@ -934,18 +1165,13 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    for sec_id, sec_title, section_song_pairs in grouped_sections:
+    for sec_id, sec_title, entries in grouped_entries:
         if sec_id is None:
-            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
+            add_service_entry_block_to_prs(prs, entries, first_layout, rest_layout, divider_layout=divider_layout)
             continue
 
         target_idx = find_section_insert_index(prs, sec_title)
-        start_idx, end_idx = add_section_song_block_to_prs(
-            prs,
-            section_song_pairs,
-            first_layout,
-            rest_layout,
-        )
+        start_idx, end_idx = add_service_entry_block_to_prs(prs, entries, first_layout, rest_layout, divider_layout=divider_layout)
         move_slide_block(prs, start_idx, end_idx, target_idx)
 
     output = BytesIO()
@@ -1253,8 +1479,9 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 # =========================================================
 def get_service_song_start_slides(setlist, template_bytes: bytes):
     starts = [None] * len(setlist)
+    generated_items = st.session_state.get("generated_service_items", [])
 
-    if st.session_state.get("service_output_mode") == "songs" or not st.session_state.get("preserve_template_slides", True):
+    if st.session_state.get("service_output_mode") == "songs":
         slide_counter = 1
         ordered = get_ordered_songs_for_output(setlist)
         for original_idx, song in ordered:
@@ -1262,12 +1489,23 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
             slide_counter += len(song["slides"])
         return starts
 
+    if not st.session_state.get("preserve_template_slides", True):
+        slide_counter = 1
+        for _, _, entries in build_ordered_service_entries(setlist, generated_items):
+            for _, entry_type, original_idx, payload in entries:
+                if entry_type == "song":
+                    starts[original_idx] = slide_counter
+                    slide_counter += len(payload["slides"])
+                else:
+                    slide_counter += max(1, len(chunk_generated_body_lines(payload.get("body_lines", []))))
+        return starts
+
     sections = st.session_state.get("template_sections", [])
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
-    groups = group_songs_by_section_order(setlist)
+    groups = build_ordered_service_entries(setlist, generated_items)
 
-    songs_by_sec = {sec_id: song_pairs for sec_id, _, song_pairs in groups if sec_id is not None}
-    unassigned = next((song_pairs for sec_id, _, song_pairs in groups if sec_id is None), [])
+    entries_by_sec = {sec_id: entries for sec_id, _, entries in groups if sec_id is not None}
+    unassigned = next((entries for sec_id, _, entries in groups if sec_id is None), [])
 
     slide_counter = 1
 
@@ -1276,13 +1514,19 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
         if sec["id"] not in hidden_ids:
             slide_counter += len(sec.get("content_slide_indices", []))
 
-        for original_idx, song in songs_by_sec.get(sec["id"], []):
-            starts[original_idx] = slide_counter
-            slide_counter += len(song["slides"])
+        for _, entry_type, original_idx, payload in entries_by_sec.get(sec["id"], []):
+            if entry_type == "song":
+                starts[original_idx] = slide_counter
+                slide_counter += len(payload["slides"])
+            else:
+                slide_counter += max(1, len(chunk_generated_body_lines(payload.get("body_lines", []))))
 
-    for original_idx, song in unassigned:
-        starts[original_idx] = slide_counter
-        slide_counter += len(song["slides"])
+    for _, entry_type, original_idx, payload in unassigned:
+        if entry_type == "song":
+            starts[original_idx] = slide_counter
+            slide_counter += len(payload["slides"])
+        else:
+            slide_counter += max(1, len(chunk_generated_body_lines(payload.get("body_lines", []))))
 
     return starts
 
@@ -1661,6 +1905,10 @@ with st.sidebar:
 
             with action_cols[1]:
                 if st.button("⬆️", use_container_width=True, help="Move selected song up") and selected_index > 0:
+                    setlist[selected_index - 1]["flow_order"], setlist[selected_index]["flow_order"] = (
+                        setlist[selected_index]["flow_order"],
+                        setlist[selected_index - 1]["flow_order"],
+                    )
                     setlist[selected_index - 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index - 1],
@@ -1687,6 +1935,10 @@ with st.sidebar:
 
             with action_cols[2]:
                 if st.button("⬇️", use_container_width=True, help="Move selected song down") and selected_index < len(setlist) - 1:
+                    setlist[selected_index + 1]["flow_order"], setlist[selected_index]["flow_order"] = (
+                        setlist[selected_index]["flow_order"],
+                        setlist[selected_index + 1]["flow_order"],
+                    )
                     setlist[selected_index + 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index + 1],
@@ -1738,6 +1990,7 @@ with st.sidebar:
 
             if st.button("Clear Setlist", use_container_width=True, type="secondary"):
                 st.session_state["setlist"] = []
+                st.session_state["generated_service_items"] = []
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
@@ -1757,26 +2010,35 @@ with st.sidebar:
         )
 
         replace_existing_setlist = st.checkbox(
-            "Replace current setlist",
+            "Replace current service items",
             value=False,
             key="replace_setlist_from_docx",
         )
+        import_non_song_items = st.checkbox(
+            "Generate non-song text slides (Call to Worship, Scripture Reading, Sermon, Benediction, etc.)",
+            value=True,
+            key="import_non_song_items_from_docx",
+        )
 
-        if st.button("Import Songs from DOCX", use_container_width=True):
+        if st.button("Import Service from DOCX", use_container_width=True):
             if service_docx_file is None:
                 st.warning("Please upload a .docx file first.")
             else:
                 try:
-                    imported_items, missing_songs, parsed_song_rows = import_setlist_from_order_docx(
+                    imported_items, missing_songs, parsed_song_rows, generated_items, parsed_text_rows = import_setlist_from_order_docx(
                         service_docx_file,
                         st.session_state.get("template_sections", []),
+                        import_non_song_items=import_non_song_items,
                     )
 
                     if replace_existing_setlist:
                         st.session_state["setlist"] = imported_items
+                        st.session_state["generated_service_items"] = generated_items
                     else:
                         st.session_state["setlist"].extend(imported_items)
+                        st.session_state["generated_service_items"].extend(generated_items)
 
+                    normalize_flow_orders()
                     clear_service_outputs()
 
                     st.session_state["editing_setlist_index"] = None
@@ -1785,25 +2047,27 @@ with st.sidebar:
                     st.session_state["pending_setlist_selectbox_index"] = 0
                     st.session_state["setlist_selectbox_sidebar"] = 0
 
-                    st.success(f"Imported {len(imported_items)} song(s) from DOCX.")
+                    st.success(f"Imported {len(imported_items)} song(s) and {len(generated_items)} generated text item(s) from DOCX.")
 
                     if parsed_song_rows:
                         st.caption("Parsed songs:")
                         for i, song in enumerate(parsed_song_rows, start=1):
                             sec_title = get_section_title_by_id(song.get("mapped_section_id"))
                             sec_suffix = f" → {sec_title}" if sec_title else ""
-                            st.write(
-                                f"{i}. UMH {song['umh_number']} {song['title']}{sec_suffix}"
-                            )
+                            st.write(f"{i}. UMH {song['umh_number']} {song['title']}{sec_suffix}")
+
+                    if parsed_text_rows:
+                        st.caption("Generated text slides:")
+                        for i, item in enumerate(parsed_text_rows, start=1):
+                            sec_title = get_section_title_by_id(item.get("mapped_section_id"))
+                            sec_suffix = f" → {sec_title}" if sec_title else ""
+                            body_suffix = f" ({len(item.get('body_lines', []))} line(s))" if item.get("body_lines") else ""
+                            st.write(f"{i}. {item['title']}{body_suffix}{sec_suffix}")
 
                     if missing_songs:
-                        st.warning(
-                            f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets."
-                        )
+                        st.warning(f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets.")
                         for song in missing_songs:
                             st.write(f"- UMH {song['umh_number']} {song['title']}")
-
-                    st.rerun()
 
                 except Exception as e:
                     st.exception(e)
@@ -2013,6 +2277,10 @@ with main_left:
         else:
             item = build_editor_song_item(current_slides)
             edit_idx = st.session_state.get("editing_setlist_index")
+            if edit_idx is None:
+                item["flow_order"] = next_service_flow_order()
+            else:
+                item["flow_order"] = st.session_state["setlist"][edit_idx].get("flow_order", next_service_flow_order())
 
             if edit_idx is None:
                 duplicate_index = next(
@@ -2030,6 +2298,7 @@ with main_left:
                     st.warning(f"This song is already in the setlist as item #{duplicate_index + 1}.")
                 else:
                     st.session_state["setlist"].append(item)
+                    normalize_flow_orders()
                     clear_service_outputs()
                     st.success(
                         f'Added: {"UMH " + item["umh_number"] + " " if item["umh_number"] else ""}{item["title"]}'
@@ -2038,6 +2307,7 @@ with main_left:
                     st.rerun()
             else:
                 st.session_state["setlist"][edit_idx] = item
+                normalize_flow_orders()
                 clear_service_outputs()
 
                 if (
