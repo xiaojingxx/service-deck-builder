@@ -844,9 +844,9 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
         with open(pptx_path, "wb") as f:
             f.write(pptx_bytes.getvalue())
 
-        debug_pptx_path = "/tmp/debug_generated_preview.pptx"
-        with open(debug_pptx_path, "wb") as f:
-            f.write(pptx_bytes.getvalue())
+        # ✅ ADD HERE (after saving file, before soffice runs)
+        st.write("Saved debug file:", pptx_path)
+        st.write("Exists:", os.path.exists(pptx_path))
 
         cmd = [
             SOFFICE_PATH,
@@ -858,52 +858,15 @@ def pptx_to_preview_images(pptx_bytes: BytesIO):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                "Preview conversion failed.\n"
-                f"Return code: {result.returncode}\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
+        # ✅ ALSO ADD HERE (to debug LibreOffice)
+        st.write("SOFFICE return code:", result.returncode)
+        st.write("stdout:", result.stdout)
+        st.write("stderr:", result.stderr)
 
         pdf_files = [f for f in os.listdir(tmpdir) if f.lower().endswith(".pdf")]
-        if not pdf_files:
-            raise RuntimeError(
-                "Preview PDF was not created.\n"
-                f"Files in temp dir: {os.listdir(tmpdir)}\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
 
-        pdf_path = os.path.join(tmpdir, pdf_files[0])
-
-        try:
-            doc = fitz.open(pdf_path)
-            repaired_bytes = doc.tobytes(garbage=3, clean=True, deflate=True)
-            doc.close()
-            doc = fitz.open(stream=repaired_bytes, filetype="pdf")
-        except Exception as e:
-            raise RuntimeError(f"Unable to open preview PDF in PyMuPDF: {e}")
-
-        images = []
-        try:
-            for page in doc:
-                pix = page.get_pixmap(dpi=60, alpha=False)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=45, optimize=True)
-                images.append(buffer.getvalue())
-
-                buffer.close()
-                del pix
-                del img
-                del buffer
-        finally:
-            doc.close()
-
-        return images
-
+        # ✅ ADD HERE (to check conversion result)
+        st.write("Files in temp dir:", os.listdir(tmpdir))
 
 def preview_error_message(exc: Exception) -> str:
     msg = str(exc).strip()
