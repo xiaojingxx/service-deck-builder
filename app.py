@@ -519,7 +519,6 @@ def validate_template_bytes(template_bytes: bytes):
 # SONG / SECTION HELPERS
 # =========================================================
 def build_editor_song_item(current_slides):
-    # ✅ ensure section always exists
     section_id = st.session_state.get("selected_song_section_id")
 
     if not section_id:
@@ -544,9 +543,8 @@ def build_editor_song_item(current_slides):
         ),
         "override_lyrics_font_size": st.session_state["editor_override_lyrics_font_size"],
         "override_line_spacing": st.session_state["editor_override_line_spacing"],
-        "section_id": section_id,   # 🔥 FIX
+        "section_id": section_id,
     }
-
 
 def build_current_song_signature(song_item, selected_template_name):
     return (
@@ -569,10 +567,18 @@ def get_ordered_songs_for_output(setlist):
 
     for idx, song in enumerate(setlist):
         sec_id = song.get("section_id")
-        if sec_id in songs_by_section:
-            songs_by_section[sec_id].append((idx, song))
+        
+        if not sec_id:
+            default_section = pick_default_service_section(template_sections)
+            sec_id = default_section["id"] if default_section else None
+            song["section_id"] = sec_id
+        
+        song_item = {"type": "song", "song_id": song_id}
+        
+        if sec_id in block_lookup:
+            block_lookup[sec_id]["items"].append(song_item)
         else:
-            unassigned_songs.append((idx, song))
+            unassigned_items.append(song_item)
 
     ordered = []
     for sec in sections:
