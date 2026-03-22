@@ -208,17 +208,41 @@ def search_titles(keyword: str, limit: int = 20):
     return matches[:limit]
 
 
-def split_slides_manual(text: str) -> list[list[str]]:
-    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
-    slides = []
+def is_effectively_blank(line: str) -> bool:
+    if line is None:
+        return True
 
-    for block in blocks:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if lines:
-            slides.append(lines)
+    # normalize weird whitespace
+    line = str(line).replace("\xa0", " ")  # non-breaking space
+    line = line.replace("\u200b", "")      # zero-width space
+    line = line.strip()
+
+    return line == ""
+
+
+def split_slides_manual(text: str):
+    if not text:
+        return []
+
+    lines = text.splitlines()
+
+    slides = []
+    current_slide = []
+
+    for raw_line in lines:
+        line = str(raw_line).replace("\xa0", " ")
+
+        if is_effectively_blank(line):
+            if current_slide:
+                slides.append("\n".join(current_slide).strip())
+                current_slide = []
+        else:
+            current_slide.append(line.strip())
+
+    if current_slide:
+        slides.append("\n".join(current_slide).strip())
 
     return slides
-
 
 def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list[str]]:
     if lines_per_slide < 1:
