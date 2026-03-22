@@ -2535,7 +2535,7 @@ with main_left:
             )
 
     with split_col3:
-        st.write("")
+        st.markdown("<br>", unsafe_allow_html=True)
         refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
 
     old_text = st.session_state.get("last_editor_text", "")
@@ -2566,6 +2566,7 @@ with main_left:
     song_item = build_editor_song_item(current_slides)
 
     if st.session_state["auto_split_by_lines"]:
+        st.session_state["smart_split_enabled"] = False
         st.caption(
             f"{len(current_slides)} slide(s) "
             f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
