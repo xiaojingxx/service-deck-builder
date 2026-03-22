@@ -240,19 +240,12 @@ def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list
     return slides
 
 def get_current_slides(text: str) -> list[list[str]]:
-    if st.session_state["auto_split_by_lines"]:
-        return split_slides_by_line_count(
-            text,
-            lines_per_slide=st.session_state["lines_per_slide"],
-        )
-
     if st.session_state.get("smart_split_enabled", False):
         return split_slides_balanced(
             text,
             max_chars=st.session_state.get("smart_split_max_chars", 30),
             max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
         )
-
     return split_slides_manual(text)
 
 
@@ -2507,15 +2500,11 @@ with main_left:
         st.caption("No template sections detected.")
 
     st.markdown("#### Slide Splitting")
-    split_col1, split_col2, split_col3 = st.columns([3,3,1])
-
+    split_col1, split_col2 = st.columns([3, 1])
+    
     with split_col1:
-        st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
-        st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
-
-    with split_col2:
         st.checkbox("Enable smart split for long lyric lines", key="smart_split_enabled")
-        
+    
         if st.session_state["smart_split_enabled"]:
             st.slider(
                 "Smart split max characters per line",
@@ -2529,26 +2518,25 @@ with main_left:
                 max_value=6,
                 key="smart_split_max_lines_per_slide",
             )
-
-    with split_col3:
-        st.markdown("<br>", unsafe_allow_html=True)
+    
+    with split_col2:
+        st.write("")
         refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
-
-    old_text = st.session_state.get("last_editor_text", "")
-    editor_text = st_ace(
-        value=st.session_state.get("editor_text", ""),
-        language="text",
-        theme="textmate",
-        keybinding="vscode",
-        font_size=16,
-        tab_size=2,
-        wrap=True,
-        show_gutter=False,
-        auto_update=True,
-        readonly=False,
-        height=420,
-        key=f"editor_ace_{st.session_state['editor_ace_key']}",
-    )
+        old_text = st.session_state.get("last_editor_text", "")
+        editor_text = st_ace(
+            value=st.session_state.get("editor_text", ""),
+            language="text",
+            theme="textmate",
+            keybinding="vscode",
+            font_size=16,
+            tab_size=2,
+            wrap=True,
+            show_gutter=False,
+            auto_update=True,
+            readonly=False,
+            height=420,
+            key=f"editor_ace_{st.session_state['editor_ace_key']}",
+        )
 
     if editor_text is None:
         editor_text = st.session_state.get("editor_text", "")
