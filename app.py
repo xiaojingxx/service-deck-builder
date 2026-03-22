@@ -211,36 +211,34 @@ def search_titles(keyword: str, limit: int = 20):
 def is_effectively_blank(line: str) -> bool:
     if line is None:
         return True
-
-    # normalize weird whitespace
-    line = str(line).replace("\xa0", " ")  # non-breaking space
-    line = line.replace("\u200b", "")      # zero-width space
+    line = str(line).replace("\xa0", " ")
+    line = line.replace("\u200b", "")
     line = line.strip()
-
     return line == ""
 
 
-def split_slides_manual(text: str):
+def split_slides_manual(text: str) -> list[list[str]]:
     if not text:
         return []
 
     lines = text.splitlines()
-
     slides = []
     current_slide = []
 
     for raw_line in lines:
-        line = str(raw_line).replace("\xa0", " ")
+        line = str(raw_line).replace("\xa0", " ").replace("\u200b", "")
 
         if is_effectively_blank(line):
             if current_slide:
-                slides.append("\n".join(current_slide).strip())
+                slides.append(current_slide)
                 current_slide = []
         else:
             current_slide.append(line.strip())
 
     if current_slide:
-        slides.append("\n".join(current_slide).strip())
+        slides.append(current_slide)
+
+    return slides
 
     return slides
 
