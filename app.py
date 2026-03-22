@@ -112,6 +112,7 @@ DEFAULTS = {
     "service_order_blocks": [],
     "song_store": {},
     "last_docx_section_mapping": [],
+    "selected_song_id": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -344,6 +345,31 @@ def apply_docx_heading_alias(heading: str) -> str:
     }
 
     return alias_map.get(simple, heading)
+
+def get_flat_song_index_by_song_id(setlist, song_id):
+    if not song_id:
+        return 0
+
+    for i, song in enumerate(setlist):
+        if song.get("song_id") == song_id:
+            return i
+    return 0
+
+
+def restore_selected_index_from_song_id():
+    setlist = st.session_state.get("setlist", [])
+    restored_index = get_flat_song_index_by_song_id(
+        setlist,
+        st.session_state.get("selected_song_id"),
+    )
+
+    if setlist:
+        restored_index = max(0, min(restored_index, len(setlist) - 1))
+    else:
+        restored_index = 0
+
+    st.session_state["setlist_selected_index"] = restored_index
+    st.session_state["pending_setlist_selectbox_index"] = restored_index
 
 # =========================================================
 # MOVE HELPERS
@@ -2138,14 +2164,17 @@ with st.sidebar:
                 format_func=lambda i: labels[i],
                 key="setlist_selectbox_sidebar",
             )
-
+            
             try:
                 selected_index = int(selected_index)
             except Exception:
                 selected_index = 0
-
+            
             selected_index = max(0, min(selected_index, len(labels) - 1))
             st.session_state["setlist_selected_index"] = selected_index
+            
+            if 0 <= selected_index < len(setlist):
+                st.session_state["selected_song_id"] = setlist[selected_index].get("song_id")
 
             if (
                 selected_index != previous_selected_index
