@@ -57,15 +57,14 @@ if "setlist" not in st.session_state:
 if "selected_song_id" not in st.session_state:
     st.session_state["selected_song_id"] = None
 
-if "selected_song_id_selectbox" not in st.session_state:
-    st.session_state["selected_song_id_selectbox"] = None
+if "song_selectbox_version" not in st.session_state:
+    st.session_state["song_selectbox_version"] = 0
 
 
 # =========================
 # APP
 # =========================
 st.title("Service Builder (Stable Version)")
-
 
 if st.button("Add Dummy Songs"):
     st.session_state["setlist"] = [
@@ -74,9 +73,8 @@ if st.button("Add Dummy Songs"):
         {"song_id": "s3", "title": "Song C"},
     ]
     st.session_state["selected_song_id"] = "s1"
-    st.session_state["selected_song_id_selectbox"] = "s1"
+    st.session_state["song_selectbox_version"] += 1
     st.rerun()
-
 
 setlist = st.session_state["setlist"]
 
@@ -84,31 +82,29 @@ if setlist:
     ids = []
     title_map = {}
 
-    for s in setlist:
+    for i, s in enumerate(setlist):
         song_id = s.get("song_id")
         if not song_id:
-            song_id = f"fallback_{s.get('title', '')}"
+            song_id = f"fallback_{s.get('title', '')}_{i}"
             s["song_id"] = song_id
 
         ids.append(song_id)
         title_map[song_id] = s.get("title", song_id)
 
-    # restore current selection if valid, otherwise use first song
     selected_song_id = st.session_state.get("selected_song_id")
     if selected_song_id not in ids:
         selected_song_id = ids[0]
+        st.session_state["selected_song_id"] = selected_song_id
 
-    # keep widget state synced
-    if st.session_state.get("selected_song_id_selectbox") not in ids:
-        st.session_state["selected_song_id_selectbox"] = selected_song_id
-    elif st.session_state["selected_song_id_selectbox"] != selected_song_id:
-        st.session_state["selected_song_id_selectbox"] = selected_song_id
+    selected_index_for_widget = ids.index(selected_song_id)
 
+    widget_key = f"selected_song_id_selectbox_v{st.session_state['song_selectbox_version']}"
     selected_song_id = st.selectbox(
         "Select song",
         options=ids,
+        index=selected_index_for_widget,
         format_func=lambda sid: title_map[sid],
-        key="selected_song_id_selectbox",
+        key=widget_key,
     )
 
     st.session_state["selected_song_id"] = selected_song_id
@@ -128,7 +124,7 @@ if setlist:
                 setlist[selected_index - 1],
             )
             st.session_state["selected_song_id"] = moved_song_id
-            st.session_state["selected_song_id_selectbox"] = moved_song_id
+            st.session_state["song_selectbox_version"] += 1
             st.rerun()
 
     with col2:
@@ -139,7 +135,7 @@ if setlist:
                 setlist[selected_index + 1],
             )
             st.session_state["selected_song_id"] = moved_song_id
-            st.session_state["selected_song_id_selectbox"] = moved_song_id
+            st.session_state["song_selectbox_version"] += 1
             st.rerun()
 
     with col3:
@@ -154,7 +150,7 @@ if setlist:
 
             setlist.pop(selected_index)
             st.session_state["selected_song_id"] = next_id
-            st.session_state["selected_song_id_selectbox"] = next_id
+            st.session_state["song_selectbox_version"] += 1
             st.rerun()
 
 st.write("Current setlist:", setlist)
