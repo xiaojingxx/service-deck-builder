@@ -2521,20 +2521,21 @@ with main_left:
         st.write("")
         refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
         old_text = st.session_state.get("last_editor_text", "")
-        editor_text = st_ace(
-            value=st.session_state.get("editor_text", ""),
-            language="text",
-            theme="textmate",
-            keybinding="vscode",
-            font_size=16,
-            tab_size=2,
-            wrap=True,
-            show_gutter=False,
-            auto_update=True,
-            readonly=False,
-            height=420,
-            key=f"editor_ace_{st.session_state['editor_ace_key']}",
-        )
+    
+    editor_text = st_ace(
+        value=st.session_state.get("editor_text", ""),
+        language="text",
+        theme="textmate",
+        keybinding="vscode",
+        font_size=16,
+        tab_size=2,
+        wrap=True,
+        show_gutter=False,
+        auto_update=True,
+        readonly=False,
+        height=420,
+        key=f"editor_ace_{st.session_state['editor_ace_key']}",
+    )
 
     if editor_text is None:
         editor_text = st.session_state.get("editor_text", "")
