@@ -10,7 +10,6 @@ from shutil import which
 import fitz  # PyMuPDF
 import gspread
 import psutil
-import re
 import streamlit as st
 from streamlit_ace import st_ace
 from google.oauth2.service_account import Credentials
@@ -18,7 +17,6 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
-from docx import Document
 
 
 # =========================================================
@@ -109,10 +107,6 @@ DEFAULTS = {
     "selected_song_section_id": None,
     "setlist_selectbox_sidebar": 0,
     "pending_setlist_selectbox_index": None,
-    "service_order_blocks": [],
-    "song_store": {},
-    "last_docx_section_mapping": [],
-    "selected_song_id": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -208,39 +202,17 @@ def search_titles(keyword: str, limit: int = 20):
     return matches[:limit]
 
 
-def is_effectively_blank(line: str) -> bool:
-    if line is None:
-        return True
-    line = str(line).replace("\xa0", " ")
-    line = line.replace("\u200b", "")
-    line = line.strip()
-    return line == ""
-
-
 def split_slides_manual(text: str) -> list[list[str]]:
-    if not text:
-        return []
-
-    lines = text.splitlines()
+    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
     slides = []
-    current_slide = []
 
-    for raw_line in lines:
-        line = str(raw_line).replace("\xa0", " ").replace("\u200b", "")
-
-        if is_effectively_blank(line):
-            if current_slide:
-                slides.append(current_slide)
-                current_slide = []
-        else:
-            current_slide.append(line.strip())
-
-    if current_slide:
-        slides.append(current_slide)
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if lines:
+            slides.append(lines)
 
     return slides
 
-    return slides
 
 def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list[str]]:
     if lines_per_slide < 1:
@@ -343,55 +315,6 @@ def delete_slide_by_index(prs, slide_index: int):
     prs.part.drop_rel(rId)
     del prs.slides._sldIdLst[slide_index]
 
-def apply_docx_heading_alias(heading: str) -> str:
-    """
-    Map common DOCX headings to template section names.
-    This is a controlled alias layer (safe hardcoding).
-    """
-    simple = simplify_heading_text(heading)
-
-    alias_map = {
-        "closing hymn": "response",
-        "closing song": "response",
-        "hymn of response": "response",
-        "response hymn": "response",
-
-        "offertory": "tithe offering",
-        "offering": "tithe offering",
-
-        "announcements": "announcements",
-        "welcome announcements": "announcements",
-
-        "doxology": "doxology",
-        "gloria patri": "gloria patri",
-    }
-
-    return alias_map.get(simple, heading)
-
-def get_flat_song_index_by_song_id(setlist, song_id):
-    if not song_id:
-        return 0
-
-    for i, song in enumerate(setlist):
-        if song.get("song_id") == song_id:
-            return i
-    return 0
-
-
-def restore_selected_index_from_song_id():
-    setlist = st.session_state.get("setlist", [])
-    restored_index = get_flat_song_index_by_song_id(
-        setlist,
-        st.session_state.get("selected_song_id"),
-    )
-
-    if setlist:
-        restored_index = max(0, min(restored_index, len(setlist) - 1))
-    else:
-        restored_index = 0
-
-    st.session_state["setlist_selected_index"] = restored_index
-    st.session_state["pending_setlist_selectbox_index"] = restored_index
 
 # =========================================================
 # MOVE HELPERS
@@ -501,29 +424,14 @@ def get_current_divider_positions(prs):
     return positions
 
 
-def canonicalize_section_label(s: str) -> str:
-    s = str(s or "").strip().lower()
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-
-
 def find_section_insert_index(prs, section_title: str):
     divider_positions = get_current_divider_positions(prs)
-    target_norm = canonicalize_section_label(section_title)
 
     match_index = None
     for idx, (_, title) in enumerate(divider_positions):
-        if canonicalize_section_label(title) == target_norm:
+        if title == section_title:
             match_index = idx
             break
-
-    if match_index is None:
-        for idx, (_, title) in enumerate(divider_positions):
-            title_norm = canonicalize_section_label(title)
-            if target_norm and (target_norm in title_norm or title_norm in target_norm):
-                match_index = idx
-                break
 
     if match_index is None:
         return len(prs.slides)
@@ -647,223 +555,6 @@ def group_songs_by_section_order(setlist):
         ordered_groups.append((None, None, unassigned))
 
     return ordered_groups
-
-
-
-
-def format_song_label(song, idx=None):
-    if song.get("umh_number"):
-        base = f'UMH {song["umh_number"]} {song["title"]}'.strip()
-    else:
-        base = song.get("title", "")
-    if idx is not None:
-        return f"{idx+1}. {base}"
-    return base
-
-
-def create_empty_service_order_blocks_from_template(template_sections):
-    return [
-        {
-            "block_id": f"block_{i}",
-            "section_id": sec["id"],
-            "section_title": sec["title"],
-            "source_heading": sec["title"],
-            "match_type": "template",
-            "score": 100,
-            "items": [],
-        }
-        for i, sec in enumerate(template_sections)
-    ]
-
-
-def pick_default_service_section(template_sections):
-    if not template_sections:
-        return None
-
-    skip_canonicals = {
-        "welcome to mci",
-        "welcome",
-        "announcements",
-    }
-
-    preferred_canonicals = {
-        "call to worship",
-        "scripture reading",
-        "corporate prayer",
-        "sermon",
-        "response",
-        "benediction",
-        "tithe offering",
-        "tithes offerings",
-        "doxology",
-    }
-
-    for sec in template_sections:
-        canon = canonicalize_section_label(sec["title"])
-        if canon in preferred_canonicals:
-            return sec
-
-    for sec in template_sections:
-        canon = canonicalize_section_label(sec["title"])
-        if canon not in skip_canonicals:
-            return sec
-
-    return template_sections[0]
-
-
-def flatten_blocks_to_setlist(service_order_blocks, song_store):
-    flat = []
-    for block in service_order_blocks:
-        for item in block.get("items", []):
-            if item.get("type") != "song":
-                continue
-            song = song_store.get(item.get("song_id"))
-            if not song:
-                continue
-            flat.append({
-                "umh_number": song.get("umh_number", ""),
-                "title": song.get("title", ""),
-                "slides": song.get("slides", []),
-                "lyrics_font_size_pt": song.get("lyrics_font_size_pt"),
-                "line_spacing": song.get("line_spacing"),
-                "override_lyrics_font_size": song.get("override_lyrics_font_size", False),
-                "override_line_spacing": song.get("override_line_spacing", False),
-                "section_id": block.get("section_id"),
-                "song_id": song.get("song_id"),
-                "service_block_id": block.get("block_id"),
-                "service_block_title": block.get("section_title"),
-            })
-    return flat
-
-
-def sync_block_model_from_setlist():
-    template_sections = st.session_state.get("template_sections", []) or []
-    if not template_sections:
-        return
-
-    current_blocks = st.session_state.get("service_order_blocks", []) or []
-    song_store = st.session_state.get("song_store", {}) or {}
-    setlist = st.session_state.get("setlist", []) or []
-
-    if not current_blocks:
-        current_blocks = create_empty_service_order_blocks_from_template(template_sections)
-
-    # preserve non-song items from existing blocks, but rebuild song nesting from setlist
-    block_lookup = {}
-    new_blocks = []
-    for sec in template_sections:
-        existing = next((b for b in current_blocks if b.get("section_id") == sec["id"]), None)
-        if existing:
-            items = [it for it in existing.get("items", []) if it.get("type") != "song"]
-            block = {**existing, "section_title": sec["title"], "items": items}
-        else:
-            block = {
-                "block_id": f"block_{len(new_blocks)}",
-                "section_id": sec["id"],
-                "section_title": sec["title"],
-                "source_heading": sec["title"],
-                "match_type": "template",
-                "score": 100,
-                "items": [],
-            }
-        new_blocks.append(block)
-        block_lookup[sec["id"]] = block
-
-    unassigned_items = []
-    for idx, song in enumerate(setlist):
-        song_id = song.get("song_id") or f"setlist_song_{idx}"
-        song_store[song_id] = {
-            "song_id": song_id,
-            "umh_number": song.get("umh_number", ""),
-            "title": song.get("title", ""),
-            "slides": song.get("slides", []),
-            "lyrics_font_size_pt": song.get("lyrics_font_size_pt"),
-            "line_spacing": song.get("line_spacing"),
-            "override_lyrics_font_size": song.get("override_lyrics_font_size", False),
-            "override_line_spacing": song.get("override_line_spacing", False),
-        }
-        sec_id = song.get("section_id")
-        song_item = {"type": "song", "song_id": song_id}
-        if sec_id in block_lookup:
-            block_lookup[sec_id]["items"].append(song_item)
-        else:
-            unassigned_items.append(song_item)
-
-    if unassigned_items:
-        new_blocks.append({
-            "block_id": "block_unassigned",
-            "section_id": None,
-            "section_title": "Unassigned Songs",
-            "source_heading": "Unassigned Songs",
-            "match_type": "derived",
-            "score": 100,
-            "items": unassigned_items,
-        })
-
-    st.session_state["service_order_blocks"] = new_blocks
-    st.session_state["song_store"] = song_store
-
-
-def build_template_service_order_view(setlist=None):
-    sync_block_model_from_setlist()
-    service_order_blocks = st.session_state.get("service_order_blocks", []) or []
-    song_store = st.session_state.get("song_store", {}) or {}
-    setlist = st.session_state.get("setlist", []) or []
-
-    index_by_song_id = {}
-    for i, song in enumerate(setlist):
-        song_id = song.get("song_id")
-        if song_id:
-            index_by_song_id[song_id] = i
-
-    groups = []
-    for block in service_order_blocks:
-        items = []
-        for item in block.get("items", []):
-            if item.get("type") != "song":
-                continue
-            song = song_store.get(item.get("song_id"))
-            if not song:
-                continue
-            items.append({
-                "type": "song",
-                "index": index_by_song_id.get(item.get("song_id")),
-                "song": song,
-            })
-        groups.append({
-            "section_id": block.get("section_id"),
-            "section_title": block.get("section_title"),
-            "items": items,
-        })
-    return groups
-
-
-def render_service_group_items_markdown(group, selected_index=None, editing_index=None):
-    st.markdown(f"**{group['section_title']}**")
-    for item in group.get("items", []):
-        i = item.get("index")
-        song = item.get("song")
-        if not song:
-            continue
-        label = format_song_label(song, i) if i is not None else format_song_label(song)
-        prefix = ""
-        if selected_index is not None and i == selected_index:
-            prefix += "🔹 "
-        if editing_index is not None and i == editing_index:
-            prefix += "✏️ "
-        if prefix:
-            st.markdown(f"&nbsp;&nbsp;**{prefix}{label}**", unsafe_allow_html=True)
-        else:
-            st.markdown(f"&nbsp;&nbsp;{label}", unsafe_allow_html=True)
-
-
-def render_service_group_items_caption(group):
-    st.markdown(f"**{group['section_title']}**")
-    for item in group.get("items", []):
-        song = item.get("song")
-        if not song:
-            continue
-        st.caption(f"{format_song_label(song)} ({len(song['slides'])} slide(s))")
 
 
 def reset_editor():
@@ -1005,377 +696,6 @@ def apply_pending_setlist_load():
     load_song_preview_if_possible()
 
 
-
-# =========================================================
-# ORDER OF SERVICE DOCX IMPORT
-# =========================================================
-UMH_IMPORT_RE = re.compile(
-    r"^(?P<hymnal>UMH)\s*(?P<number>\d+)\.?\s+(?P<title>.+?)(?:\s*\((?P<stanzas>.+?)\))?\s*$",
-    re.IGNORECASE,
-)
-
-DOCX_SECTION_ALIASES = {
-    "songs of praise": [
-        "songs of praise",
-        "hymns of praise",
-        "opening song",
-        "opening songs",
-        "opening hymn",
-        "opening hymns",
-        "praise songs",
-        "praise and worship",
-        "worship songs",
-    ],
-    "gloria patri": ["gloria patri", "glory be to the father"],
-    "scripture reading": ["scripture reading", "bible reading", "scripture"],
-    "sermon": ["sermon", "message", "sermon title", "the message"],
-    "call to worship": ["call to worship"],
-    "tithes & offerings": [
-        "tithes & offerings",
-        "tithes and offerings",
-        "offertory",
-        "offering",
-        "offering prayer",
-    ],
-    "closing song": [
-        "closing song",
-        "closing songs",
-        "closing hymn",
-        "closing hymns",
-        "response song",
-        "response hymn",
-        "sending song",
-    ],
-    "benediction": ["benediction", "closing blessing"],
-}
-
-
-def normalize_text(s: str) -> str:
-    return re.sub(r"\s+", " ", str(s or "").strip()).lower()
-
-
-
-def simplify_heading_text(s: str) -> str:
-    """
-    Normalize headings so variations like:
-    - 'CALL TO\u000bWORSHIP'
-    - 'Call to Worship (based on Ps 130:5-7)'
-    all become:
-    - 'call to worship'
-    """
-    s = str(s or "")
-
-    # Remove vertical tabs from PPT titles
-    s = s.replace("\u000b", " ")
-
-    # Remove parenthetical notes
-    s = re.sub(r"\([^)]*\)", " ", s)
-
-    # Normalize
-    s = s.lower().strip()
-
-    # Normalize symbols
-    s = s.replace("&", " and ")
-
-    # Remove punctuation
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-
-    # Collapse whitespace
-    s = re.sub(r"\s+", " ", s).strip()
-
-    return s
-
-
-def canonicalize_section_label(label: str) -> str:
-    simplified = simplify_heading_text(label)
-    if not simplified:
-        return ""
-
-    for canonical, aliases in DOCX_SECTION_ALIASES.items():
-        alias_pool = [canonical] + aliases
-        simplified_aliases = [simplify_heading_text(a) for a in alias_pool]
-        if simplified in simplified_aliases:
-            return canonical
-        for alias in simplified_aliases:
-            if alias and (simplified == alias or simplified in alias or alias in simplified):
-                return canonical
-
-    return simplified
-
-
-
-def heading_tokens(s: str) -> set[str]:
-    return {tok for tok in simplify_heading_text(s).split() if tok}
-
-
-
-def score_section_match(docx_heading: str, template_title: str) -> tuple[int, str]:
-    """
-    Score similarity between DOCX heading and template section title.
-    Returns (score, match_type).
-    """
-    docx_simple = simplify_heading_text(docx_heading)
-    tmpl_simple = simplify_heading_text(template_title)
-
-    if not docx_simple or not tmpl_simple:
-        return 0, "none"
-
-    # Exact match after normalization
-    if docx_simple == tmpl_simple:
-        return 100, "exact"
-
-    docx_tokens = set(docx_simple.split())
-    tmpl_tokens = set(tmpl_simple.split())
-
-    # Same tokens but different order/format
-    if docx_tokens == tmpl_tokens:
-        return 96, "alias"
-
-    # Substring containment
-    if docx_simple in tmpl_simple or tmpl_simple in docx_simple:
-        return 90, "contains"
-
-    # Partial token overlap
-    overlap = docx_tokens & tmpl_tokens
-    if overlap:
-        score = 60 + min(20, 10 * len(overlap))
-        return score, "token-overlap"
-
-    return 0, "none"
-
-
-def read_docx_lines(docx_file) -> list[str]:
-    doc = Document(docx_file)
-    lines = []
-    for para in doc.paragraphs:
-        text = para.text.replace(" ", " ").strip()
-        if text:
-            lines.append(text)
-    return lines
-
-
-
-def is_umh_song_line(line: str) -> bool:
-    return UMH_IMPORT_RE.match(line.strip()) is not None
-
-
-
-def parse_umh_song_line(line: str) -> dict:
-    m = UMH_IMPORT_RE.match(line.strip())
-    if not m:
-        return {
-            "umh_number": "",
-            "title": line.strip(),
-            "stanzas": "",
-            "raw": line.strip(),
-        }
-
-    return {
-        "umh_number": (m.group("number") or "").strip(),
-        "title": (m.group("title") or "").strip(),
-        "stanzas": (m.group("stanzas") or "").strip(),
-        "raw": line.strip(),
-    }
-
-
-
-def match_template_section_from_heading(heading: str, template_sections: list[dict]) -> dict | None:
-    """
-    Robust heading-to-template matcher.
-
-    Handles cases like:
-    - "Call to Worship (based on Ps 130:5-7)"
-    - "CALL TO\u000bWORSHIP"
-    """
-    if not template_sections or not heading:
-        return None
-
-    heading = apply_docx_heading_alias(heading)
-    heading_simple = simplify_heading_text(heading)
-    
-    if not heading_simple:
-        return None
-
-    best = None
-
-    for sec in template_sections:
-        template_simple = simplify_heading_text(sec["title"])
-
-        score = 0
-        match_type = "none"
-
-        if heading_simple == template_simple:
-            score = 100
-            match_type = "exact"
-
-        elif heading_simple.startswith(template_simple) or template_simple.startswith(heading_simple):
-            score = 98
-            match_type = "alias"
-
-        elif heading_simple in template_simple or template_simple in heading_simple:
-            score = 95
-            match_type = "contains"
-
-        else:
-            heading_tokens = set(heading_simple.split())
-            template_tokens = set(template_simple.split())
-            overlap = heading_tokens & template_tokens
-
-            if heading_tokens and template_tokens and overlap:
-                ratio = len(overlap) / max(1, min(len(heading_tokens), len(template_tokens)))
-                if ratio >= 0.75:
-                    score = 90
-                    match_type = "alias"
-                elif ratio >= 0.5:
-                    score = 75
-                    match_type = "token-overlap"
-
-        candidate = {
-            "section_id": sec["id"],
-            "section_title": sec["title"],
-            "score": score,
-            "match_type": match_type,
-            "docx_heading": heading,
-        }
-
-        if best is None or candidate["score"] > best["score"]:
-            best = candidate
-
-    if best and best["score"] >= 90:
-        return best
-
-    return None
-
-def section_id_from_heading(heading: str, template_sections: list[dict]) -> str | None:
-    match = match_template_section_from_heading(heading, template_sections)
-    return match["section_id"] if match else None
-
-
-
-def build_song_item_from_row(row, section_id=None):
-    lyrics_raw = str(row.get("Lyrics (Raw)", "")).strip()
-    slides = split_slides_manual(lyrics_raw)
-
-    return {
-        "umh_number": str(row.get("UMH Number", "")).strip(),
-        "title": str(row.get("Title", "")).strip(),
-        "slides": slides,
-        "lyrics_font_size_pt": None,
-        "line_spacing": None,
-        "override_lyrics_font_size": False,
-        "override_line_spacing": False,
-        "section_id": section_id,
-    }
-
-
-
-def should_treat_docx_line_as_anchor(line: str) -> bool:
-    stripped = str(line or "").strip()
-    if not stripped:
-        return False
-    if is_umh_song_line(stripped):
-        return False
-    if stripped.startswith("+") or stripped.startswith("#"):
-        return True
-
-    # Allow plain section titles from the DOCX to act as range anchors.
-    # This lets the importer map everything between major headings like
-    # Call to Worship -> Scripture Reading -> Corporate Prayer.
-    word_count = len(stripped.split())
-    has_sentence_punctuation = any(ch in stripped for ch in [":", ";", ".", "?", "!"])
-    if word_count <= 6 and not has_sentence_punctuation:
-        return True
-    return False
-
-
-
-def import_service_order_from_docx(docx_file, template_sections):
-    """
-    Template-driven block import.
-
-    Returns:
-      service_order_blocks: list[dict]
-      song_store: dict[str, dict]
-      missing_songs: list[dict]
-      section_mapping_rows: list[dict]
-    """
-    lines = read_docx_lines(docx_file)
-
-    service_order_blocks = create_empty_service_order_blocks_from_template(template_sections)
-    block_by_section_id = {block["section_id"]: block for block in service_order_blocks}
-    song_store = {}
-    missing_songs = []
-    section_mapping_rows = []
-
-    current_block = None
-    song_seq = 0
-
-    def pick_starting_block():
-        default_sec = pick_default_service_section(template_sections)
-        if default_sec:
-            return block_by_section_id.get(default_sec["id"])
-        return service_order_blocks[0] if service_order_blocks else None
-
-    current_block = pick_starting_block()
-
-    for raw_line in lines:
-        stripped = raw_line.strip()
-        if not stripped:
-            continue
-
-        is_prefixed_heading = stripped.startswith(("+", "#"))
-        heading_text = stripped[1:].strip() if is_prefixed_heading else stripped
-
-        if not is_prefixed_heading:
-            heading_match = match_template_section_from_heading(heading_text, template_sections)
-            if heading_match and heading_match["match_type"] in {"exact", "alias"}:
-                matched_block = block_by_section_id.get(heading_match["section_id"])
-                if matched_block is not None:
-                    current_block = matched_block
-                    section_mapping_rows.append({
-                        "docx_heading": heading_text,
-                        "mapped_section_id": heading_match["section_id"],
-                        "mapped_section_title": heading_match["section_title"],
-                        "match_type": heading_match["match_type"],
-                        "score": heading_match["score"],
-                        "source": "plain",
-                    })
-                    continue
-
-        if is_prefixed_heading:
-            if current_block is not None:
-                current_block["items"].append({"type": "minor_heading", "text": heading_text})
-            continue
-
-        if is_umh_song_line(stripped):
-            parsed = parse_umh_song_line(stripped)
-            row = find_row_by_umh(parsed["umh_number"])
-            if not row:
-                missing_songs.append(parsed)
-                continue
-
-            song_seq += 1
-            song_id = f"song_{song_seq}"
-            song_store[song_id] = {
-                "song_id": song_id,
-                "umh_number": str(row.get("UMH Number", "")).strip(),
-                "title": str(row.get("Title", "")).strip(),
-                "slides": split_slides_manual(str(row.get("Lyrics (Raw)", "")).strip()),
-                "lyrics_font_size_pt": None,
-                "line_spacing": None,
-                "override_lyrics_font_size": False,
-                "override_line_spacing": False,
-            }
-            if current_block is not None:
-                current_block["items"].append({"type": "song", "song_id": song_id})
-            continue
-
-        if current_block is not None:
-            current_block["items"].append({"type": "text", "text": stripped})
-
-    return service_order_blocks, song_store, missing_songs, section_mapping_rows
-
-
 # =========================================================
 # PPT BUILD HELPERS
 # =========================================================
@@ -1425,10 +745,6 @@ def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_la
 
 
 def create_combined_ppt(setlist, template_bytes: bytes):
-    sync_block_model_from_setlist()
-    service_order_blocks = st.session_state.get("service_order_blocks", []) or []
-    song_store = st.session_state.get("song_store", {}) or {}
-
     prs = open_presentation_from_bytes(template_bytes)
 
     first_layout = get_layout_by_name(prs, FIRST_LAYOUT_NAME)
@@ -1438,18 +754,12 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         raise ValueError("Template layouts not found.")
 
     output_mode = st.session_state.get("service_output_mode", "full")
-
-    ordered_song_pairs = []
-    for block in service_order_blocks:
-        for item in block.get("items", []):
-            if item.get("type") == "song":
-                song = song_store.get(item.get("song_id"))
-                if song:
-                    ordered_song_pairs.append((item["song_id"], song))
+    ordered_songs = get_ordered_songs_for_output(setlist)
+    grouped_sections = group_songs_by_section_order(setlist)
 
     if output_mode == "songs":
         delete_all_slides(prs)
-        for _, song in ordered_song_pairs:
+        for _, song in ordered_songs:
             add_song_block_to_prs(prs, song, first_layout, rest_layout)
 
         output = BytesIO()
@@ -1459,7 +769,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     if not st.session_state.get("preserve_template_slides", True):
         delete_all_slides(prs)
-        for _, song in ordered_song_pairs:
+        for _, song in ordered_songs:
             add_song_block_to_prs(prs, song, first_layout, rest_layout)
 
         output = BytesIO()
@@ -1478,20 +788,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
-    for block in service_order_blocks:
-        sec_title = block.get("section_title")
-        section_song_pairs = []
-        for item in block.get("items", []):
-            if item.get("type") != "song":
-                continue
-            song = song_store.get(item.get("song_id"))
-            if song:
-                section_song_pairs.append((item["song_id"], song))
-
-        if not section_song_pairs:
-            continue
-
-        if block.get("section_id") is None:
+    for sec_id, sec_title, section_song_pairs in grouped_sections:
+        if sec_id is None:
             add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
             continue
 
@@ -1844,7 +1142,6 @@ def get_service_song_start_slides(setlist, template_bytes: bytes):
 
 
 def refresh_service_preview(setlist, template_bytes):
-    sync_block_model_from_setlist()
     st.session_state["service_preview_images"] = None
     st.session_state["service_preview_stats"] = None
     st.session_state["service_preview_error"] = None
@@ -1928,18 +1225,12 @@ if st.session_state.get("template_sections"):
 else:
     st.session_state["selected_song_section_id"] = None
 
-if st.session_state.get("template_sections") and not st.session_state.get("service_order_blocks"):
-    st.session_state["service_order_blocks"] = create_empty_service_order_blocks_from_template(
-        st.session_state["template_sections"]
-    )
-
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    sync_block_model_from_setlist()
-    st.markdown("### Service Order")
+    st.markdown("### Setlist Order")
 
     setlist = st.session_state["setlist"]
 
@@ -1952,12 +1243,27 @@ with st.sidebar:
         selected_index = max(0, min(selected_index, len(setlist) - 1))
         st.session_state["setlist_selected_index"] = selected_index
 
-        for group in build_template_service_order_view(setlist):
-            render_service_group_items_markdown(
-                group,
-                selected_index=selected_index,
-                editing_index=editing_index,
-            )
+        for i, song in enumerate(setlist):
+            is_selected = i == selected_index
+            is_editing = i == editing_index
+            section_title = get_section_title_by_id(song.get("section_id"))
+            section_suffix = f" [{section_title}]" if section_title else ""
+
+            if song["umh_number"]:
+                label = f'{i+1}. UMH {song["umh_number"]} {song["title"]}{section_suffix}'
+            else:
+                label = f'{i+1}. {song["title"]}{section_suffix}'
+
+            prefix = ""
+            if is_selected:
+                prefix += "🔹 "
+            if is_editing:
+                prefix += "✏️ "
+
+            if prefix:
+                st.markdown(f"**{prefix}{label}**")
+            else:
+                st.markdown(label)
 
     st.divider()
 
@@ -2133,20 +1439,12 @@ with st.sidebar:
             elif keyword.strip():
                 st.info("No matching titles found.")
 
-    with st.expander("3. Service Order", expanded=True):
+    with st.expander("3. Setlist", expanded=True):
         setlist = st.session_state["setlist"]
 
         if not setlist:
             st.info("No songs added yet.")
         else:
-            st.markdown("#### Service Order (by DOCX block, using template section headers)")
-            for group in build_template_service_order_view(setlist):
-                if not group["items"]:
-                    continue
-                render_service_group_items_caption(group)
-
-            st.divider()
-            st.markdown("#### Song Selection")
             labels = []
             for i, song in enumerate(setlist):
                 section_title = get_section_title_by_id(song.get("section_id"))
@@ -2162,48 +1460,41 @@ with st.sidebar:
                 len(labels) - 1,
             )
 
-            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
+            # Stable song selection using song_id + dynamic widget key
+            for i, song in enumerate(setlist):
+                if not song.get("song_id"):
+                    song["song_id"] = f"song_{i}_{song.get('umh_number','')}_{song.get('title','')}"
 
-            # Restore selected song by stable song_id first
-            restored_index = get_flat_song_index_by_song_id(
-                setlist,
-                st.session_state.get("selected_song_id"),
+            ids = [s["song_id"] for s in setlist]
+            label_map = {song["song_id"]: labels[i] for i, song in enumerate(setlist)}
+
+            selected_song_id = st.session_state.get("selected_song_id")
+            if selected_song_id not in ids:
+                selected_song_id = ids[0]
+                st.session_state["selected_song_id"] = selected_song_id
+
+            previous_selected_index = next(
+                (i for i, s in enumerate(setlist) if s.get("song_id") == selected_song_id),
+                0,
             )
-            
-            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-            if pending_index is None:
-                pending_index = restored_index
-            
-            try:
-                pending_index = int(pending_index)
-            except Exception:
-                pending_index = restored_index
-            
-            pending_index = max(0, min(pending_index, len(labels) - 1))
-            
-            # IMPORTANT: set widget state BEFORE the selectbox is created
-            st.session_state["setlist_selectbox_sidebar"] = pending_index
-            st.session_state["setlist_selected_index"] = pending_index
-            
-            previous_selected_index = pending_index
 
-            selected_index = st.selectbox(
+            widget_key = f"song_select_{st.session_state.get('song_selectbox_version', 0)}"
+
+            selected_song_id = st.selectbox(
                 "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                key="setlist_selectbox_sidebar",
+                options=ids,
+                index=previous_selected_index,
+                format_func=lambda sid: label_map[sid],
+                key=widget_key,
             )
-            
-            try:
-                selected_index = int(selected_index)
-            except Exception:
-                selected_index = 0
-            
-            selected_index = max(0, min(selected_index, len(labels) - 1))
+
+            st.session_state["selected_song_id"] = selected_song_id
+
+            selected_index = next(
+                (i for i, s in enumerate(setlist) if s.get("song_id") == selected_song_id),
+                0,
+            )
             st.session_state["setlist_selected_index"] = selected_index
-            
-            if 0 <= selected_index < len(setlist):
-                st.session_state["selected_song_id"] = setlist[selected_index].get("song_id")
 
             if (
                 selected_index != previous_selected_index
@@ -2228,73 +1519,68 @@ with st.sidebar:
 
             with action_cols[1]:
                 if st.button("⬆️", use_container_width=True, help="Move selected song up") and selected_index > 0:
-                    moved_song_id = setlist[selected_index].get("song_id")
-                
+                    moved_song_id = selected_song_id
+
                     setlist[selected_index - 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index - 1],
                     )
-                
-                    st.session_state["selected_song_id"] = moved_song_id
-                
+
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
                         st.session_state["editing_setlist_index"] = selected_index - 1
                     elif editing_index == selected_index - 1:
                         st.session_state["editing_setlist_index"] = selected_index
-                
+
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = selected_index - 1
                     elif pending == selected_index - 1:
                         st.session_state["pending_setlist_load"] = selected_index
-                
-                    restore_selected_index_from_song_id()
+
+                    st.session_state["selected_song_id"] = moved_song_id
+                    st.session_state["song_selectbox_version"] = st.session_state.get("song_selectbox_version", 0) + 1
                     clear_service_outputs()
                     st.rerun()
 
             with action_cols[2]:
                 if st.button("⬇️", use_container_width=True, help="Move selected song down") and selected_index < len(setlist) - 1:
-                    moved_song_id = setlist[selected_index].get("song_id")
-                
+                    moved_song_id = selected_song_id
+
                     setlist[selected_index + 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index + 1],
                     )
-                
-                    st.session_state["selected_song_id"] = moved_song_id
-                
+
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
                         st.session_state["editing_setlist_index"] = selected_index + 1
                     elif editing_index == selected_index + 1:
                         st.session_state["editing_setlist_index"] = selected_index
-                
+
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = selected_index + 1
                     elif pending == selected_index + 1:
                         st.session_state["pending_setlist_load"] = selected_index
-                
-                    restore_selected_index_from_song_id()
+
+                    st.session_state["selected_song_id"] = moved_song_id
+                    st.session_state["song_selectbox_version"] = st.session_state.get("song_selectbox_version", 0) + 1
                     clear_service_outputs()
                     st.rerun()
 
             with action_cols[3]:
                 if st.button("🗑️", use_container_width=True, help="Delete selected song"):
-                    deleted_song_id = setlist[selected_index].get("song_id")
-                
-                    # choose next selection target before deletion
-                    next_song_id = None
                     if len(setlist) > 1:
                         if selected_index < len(setlist) - 1:
-                            next_song_id = setlist[selected_index + 1].get("song_id")
+                            next_id = setlist[selected_index + 1].get("song_id")
                         else:
-                            next_song_id = setlist[selected_index - 1].get("song_id")
-                
+                            next_id = setlist[selected_index - 1].get("song_id")
+                    else:
+                        next_id = None
+
                     setlist.pop(selected_index)
-                    st.session_state["selected_song_id"] = next_song_id
-                
+
                     if st.session_state.get("editing_setlist_index") == selected_index:
                         st.session_state["reset_editor_pending"] = True
                     elif (
@@ -2302,100 +1588,31 @@ with st.sidebar:
                         and st.session_state["editing_setlist_index"] > selected_index
                     ):
                         st.session_state["editing_setlist_index"] -= 1
-                
+
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = None
                     elif pending is not None and pending > selected_index:
                         st.session_state["pending_setlist_load"] = pending - 1
-                
-                    restore_selected_index_from_song_id()
+
+                    st.session_state["selected_song_id"] = next_id
+                    st.session_state["song_selectbox_version"] = st.session_state.get("song_selectbox_version", 0) + 1
                     clear_service_outputs()
                     st.rerun()
 
             if st.button("Clear Setlist", use_container_width=True, type="secondary"):
                 st.session_state["setlist"] = []
-                st.session_state["service_order_blocks"] = []
-                st.session_state["song_store"] = {}
-                st.session_state["last_docx_section_mapping"] = []
                 st.session_state["editing_setlist_index"] = None
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
                 st.session_state["pending_setlist_selectbox_index"] = None
                 st.session_state["selected_song_id"] = None
+                st.session_state["song_selectbox_version"] = st.session_state.get("song_selectbox_version", 0) + 1
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 st.session_state["current_song_preview_stats"] = None
                 clear_service_outputs()
                 st.rerun()
-
-
-
-    with st.expander("4. Import Order of Service", expanded=False):
-        service_docx_file = st.file_uploader(
-            "Upload Order of Service (.docx)",
-            type=["docx"],
-            key="service_docx_importer",
-        )
-
-        replace_existing_setlist = st.checkbox(
-            "Replace current setlist",
-            value=False,
-            key="replace_setlist_from_docx",
-        )
-        st.caption("Template sections remain the source of truth. DOCX is parsed into ordered blocks, and only major matched headings start a new template section block.")
-
-        if st.button("Import Songs from DOCX", use_container_width=True):
-            if service_docx_file is None:
-                st.warning("Please upload a .docx file first.")
-            else:
-                try:
-                    service_order_blocks, song_store, missing_songs, section_mapping_rows = import_service_order_from_docx(
-                        service_docx_file,
-                        st.session_state.get("template_sections", []),
-                    )
-
-                    st.session_state["service_order_blocks"] = service_order_blocks
-                    st.session_state["song_store"] = song_store
-                    st.session_state["setlist"] = flatten_blocks_to_setlist(service_order_blocks, song_store)
-                    if st.session_state["setlist"]:
-                        st.session_state["selected_song_id"] = st.session_state["setlist"][0].get("song_id")
-                    else:
-                        st.session_state["selected_song_id"] = None
-                    
-                    restore_selected_index_from_song_id()
-                    st.session_state["last_docx_section_mapping"] = section_mapping_rows
-
-                    clear_service_outputs()
-
-                    st.session_state["editing_setlist_index"] = None
-                    st.session_state["pending_setlist_load"] = None
-                    st.session_state["setlist_selected_index"] = 0
-                    st.session_state["pending_setlist_selectbox_index"] = 0
-
-                    st.success(f"Imported {len(st.session_state["setlist"])} song(s) into the template-driven service order.")
-
-                    if section_mapping_rows:
-                        st.caption("Section mapping:")
-                        for row in section_mapping_rows:
-                            mapped = row.get("mapped_section_title") or "No template section matched"
-                            st.write(
-                                f"{row['source']} {row['docx_heading']} → {mapped}"
-                                f" ({row['match_type']}, score {row['score']})"
-                            )
-
-                    if missing_songs:
-                        st.warning(
-                            f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets."
-                        )
-                        for song in missing_songs:
-                            st.write(f"- UMH {song['umh_number']} {song['title']}")
-
-                    st.rerun()
-
-                except Exception as e:
-                    st.exception(e)
-
 
 
 # =========================================================
@@ -2625,12 +1842,6 @@ with main_left:
                     st.session_state["reset_editor_pending"] = True
                     st.rerun()
             else:
-                old_item = st.session_state["setlist"][edit_idx]
-                for meta_key in ["import_uid", "service_block_id", "service_block_order", "service_block_title"]:
-                    if meta_key in old_item:
-                        item[meta_key] = old_item[meta_key]
-                if not item.get("section_id") and old_item.get("section_id"):
-                    item["section_id"] = old_item.get("section_id")
                 st.session_state["setlist"][edit_idx] = item
                 clear_service_outputs()
 
