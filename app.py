@@ -1,7 +1,5 @@
-# app_rewritten_clean.py
 import streamlit as st
 import re
-
 
 def simplify_heading_text(s: str) -> str:
     s = str(s or "")
@@ -13,65 +11,40 @@ def simplify_heading_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-
 def is_effectively_blank(line: str) -> bool:
     if line is None:
         return True
     line = str(line).replace("\xa0", " ").replace("\u200b", "")
     return line.strip() == ""
 
-
 def split_slides_manual(text: str):
     if not text:
         return []
-
     lines = text.splitlines()
     slides = []
     current = []
-
     for raw in lines:
         line = str(raw).replace("\xa0", " ").replace("\u200b", "")
-
         if is_effectively_blank(line):
             if current:
                 slides.append(current)
                 current = []
         else:
             current.append(line.strip())
-
     if current:
         slides.append(current)
-
     return slides
 
 
-def apply_docx_heading_alias(heading: str) -> str:
-    """
-    Controlled alias mapping for common worship-service labels.
-    """
-    simple = simplify_heading_text(heading)
-
-    alias_map = {
-        "closing hymn": "response",
-        "closing song": "response",
-        "hymn of response": "response",
-        "response hymn": "response",
-        "offertory": "tithe offering",
-        "offering": "tithe offering",
-        "welcome announcements": "announcements",
-    }
-
-    return alias_map.get(simple, heading)
-
+# ✅ NEW: control selectbox refresh
+if "song_selectbox_version" not in st.session_state:
+    st.session_state["song_selectbox_version"] = 0
 
 if "setlist" not in st.session_state:
     st.session_state["setlist"] = []
 
 if "selected_song_id" not in st.session_state:
     st.session_state["selected_song_id"] = None
-
-if "song_selectbox_version" not in st.session_state:
-    st.session_state["song_selectbox_version"] = 0
 
 
 st.title("Service Builder (Stable Version)")
@@ -91,17 +64,12 @@ if st.button("Add Dummy Songs"):
 setlist = st.session_state["setlist"]
 
 if setlist:
-    ids = []
-    title_map = {}
-
+    # ensure all songs have id
     for i, s in enumerate(setlist):
-        song_id = s.get("song_id")
-        if not song_id:
-            song_id = f"fallback_{s.get('title', '')}_{i}"
-            s["song_id"] = song_id
+        if not s.get("song_id"):
+            s["song_id"] = f"fallback_{i}"
 
-        ids.append(song_id)
-        title_map[song_id] = s.get("title", song_id)
+    ids = [s["song_id"] for s in setlist]
 
     selected_song_id = st.session_state.get("selected_song_id")
     if selected_song_id not in ids:
@@ -109,21 +77,22 @@ if setlist:
         st.session_state["selected_song_id"] = selected_song_id
 
     selected_index_for_widget = ids.index(selected_song_id)
+
+    # 🔥 key trick
     widget_key = f"song_select_{st.session_state['song_selectbox_version']}"
 
     selected_song_id = st.selectbox(
         "Select song",
         options=ids,
         index=selected_index_for_widget,
-        format_func=lambda sid: title_map[sid],
+        format_func=lambda sid: next(s["title"] for s in setlist if s["song_id"] == sid),
         key=widget_key,
     )
 
     st.session_state["selected_song_id"] = selected_song_id
 
     selected_index = next(
-        (i for i, s in enumerate(setlist) if s.get("song_id") == selected_song_id),
-        0,
+        i for i, s in enumerate(setlist) if s["song_id"] == selected_song_id
     )
 
     col1, col2, col3 = st.columns(3)
@@ -131,10 +100,12 @@ if setlist:
     with col1:
         if st.button("⬆️") and selected_index > 0:
             moved_song_id = selected_song_id
+
             setlist[selected_index - 1], setlist[selected_index] = (
                 setlist[selected_index],
                 setlist[selected_index - 1],
             )
+
             st.session_state["selected_song_id"] = moved_song_id
             st.session_state["song_selectbox_version"] += 1
             st.rerun()
@@ -142,10 +113,12 @@ if setlist:
     with col2:
         if st.button("⬇️") and selected_index < len(setlist) - 1:
             moved_song_id = selected_song_id
+
             setlist[selected_index + 1], setlist[selected_index] = (
                 setlist[selected_index],
                 setlist[selected_index + 1],
             )
+
             st.session_state["selected_song_id"] = moved_song_id
             st.session_state["song_selectbox_version"] += 1
             st.rerun()
@@ -161,13 +134,9 @@ if setlist:
                 next_id = None
 
             setlist.pop(selected_index)
+
             st.session_state["selected_song_id"] = next_id
             st.session_state["song_selectbox_version"] += 1
             st.rerun()
 
 st.write("Current setlist:", setlist)
-
-st.markdown("### Alias demo")
-demo_heading = st.text_input("Heading to test", value="Closing Hymn")
-if demo_heading:
-    st.write("Aliased to:", apply_docx_heading_alias(demo_heading))
