@@ -114,6 +114,9 @@ DEFAULTS = {
     "last_docx_section_mapping": [],
     "selected_song_id": None,
     "song_selectbox_version": 0,
+    "smart_split_enabled": False,
+    "smart_split_max_chars": 30,
+    "smart_split_max_lines_per_slide": 4
 }
 
 for key, value in DEFAULTS.items():
@@ -208,39 +211,6 @@ def search_titles(keyword: str, limit: int = 20):
 
     return matches[:limit]
 
-
-def is_effectively_blank(line: str) -> bool:
-    if line is None:
-        return True
-    line = str(line).replace("\xa0", " ")
-    line = line.replace("\u200b", "")
-    line = line.strip()
-    return line == ""
-
-
-def split_slides_manual(text: str) -> list[list[str]]:
-    if not text:
-        return []
-
-    lines = text.splitlines()
-    slides = []
-    current_slide = []
-
-    for raw_line in lines:
-        line = str(raw_line).replace("\xa0", " ").replace("\u200b", "")
-
-        if is_effectively_blank(line):
-            if current_slide:
-                slides.append(current_slide)
-                current_slide = []
-        else:
-            current_slide.append(line.strip())
-
-    if current_slide:
-        slides.append(current_slide)
-
-    return slides
-
 def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list[str]]:
     if lines_per_slide < 1:
         lines_per_slide = 1
@@ -269,13 +239,20 @@ def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list
 
     return slides
 
-
 def get_current_slides(text: str) -> list[list[str]]:
     if st.session_state["auto_split_by_lines"]:
         return split_slides_by_line_count(
             text,
             lines_per_slide=st.session_state["lines_per_slide"],
         )
+
+    if st.session_state.get("smart_split_enabled", False):
+        return split_slides_balanced(
+            text,
+            max_chars=st.session_state.get("smart_split_max_chars", 30),
+            max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
+        )
+
     return split_slides_manual(text)
 
 
@@ -391,6 +368,107 @@ def restore_selected_index_from_song_id():
 
     st.session_state["setlist_selected_index"] = restored_index
     st.session_state["pending_setlist_selectbox_index"] = restored_index
+
+def is_effectively_blank(line: str) -> bool:
+    if line is None:
+        return True
+    line = str(line).replace("\xa0", " ")
+    line = line.replace("\u200b", "")
+    line = line.strip()
+    return line == ""
+
+def split_line_balanced_by_length(line: str, max_chars: int = 30) -> list[str]:
+    line = str(line).strip()
+    if not line:
+        return []
+
+    if len(line) <= max_chars:
+        return [line]
+
+    words = line.split()
+    if len(words) <= 1:
+        return [line]
+
+    mid = len(words) // 2
+    best_split = mid
+    best_score = None
+
+    for idx in range(max(1, mid - 2), min(len(words), mid + 3)):
+        left = " ".join(words[:idx]).strip()
+        right = " ".join(words[idx:]).strip()
+
+        if not left or not right:
+            continue
+
+        score = abs(len(left) - len(right))
+
+        if best_score is None or score < best_score:
+            best_score = score
+            best_split = idx
+
+    left = " ".join(words[:best_split]).strip()
+    right = " ".join(words[best_split:]).strip()
+
+    return [left, right]
+
+
+def split_slides_manual(text: str) -> list[list[str]]:
+    if not text:
+        return []
+
+    lines = text.splitlines()
+    slides = []
+    current_slide = []
+
+    for raw_line in lines:
+        line = str(raw_line).replace("\xa0", " ").replace("\u200b", "")
+
+        if is_effectively_blank(line):
+            if current_slide:
+                slides.append(current_slide)
+                current_slide = []
+        else:
+            current_slide.append(line.strip())
+
+    if current_slide:
+        slides.append(current_slide)
+
+    return slides
+
+
+def split_slides_balanced(
+    text: str,
+    max_chars: int = 30,
+    max_lines_per_slide: int = 4,
+) -> list[list[str]]:
+    if not text:
+        return []
+
+    slides = []
+    current_slide = []
+
+    for raw_line in text.splitlines():
+        line = str(raw_line).replace("\xa0", " ").replace("\u200b", "").strip()
+
+        # blank line = new slide
+        if is_effectively_blank(line):
+            if current_slide:
+                slides.append(current_slide)
+                current_slide = []
+            continue
+
+        split_lines = split_line_balanced_by_length(line, max_chars=max_chars)
+
+        for split_line in split_lines:
+            if len(current_slide) >= max_lines_per_slide:
+                slides.append(current_slide)
+                current_slide = []
+            current_slide.append(split_line)
+
+    if current_slide:
+        slides.append(current_slide)
+
+    return slides
 
 # =========================================================
 # MOVE HELPERS
@@ -2429,7 +2507,7 @@ with main_left:
         st.caption("No template sections detected.")
 
     st.markdown("#### Slide Splitting")
-    split_col1, split_col2 = st.columns([3, 1])
+    split_col1, split_col2, split_col3 = st.columns([3,3,1])
 
     with split_col1:
         st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
@@ -2440,6 +2518,23 @@ with main_left:
         )
 
     with split_col2:
+        st.checkbox("Enable smart split for long lyric lines", key="smart_split_enabled")
+        
+        if st.session_state["smart_split_enabled"]:
+            st.slider(
+                "Smart split max characters per line",
+                min_value=20,
+                max_value=45,
+                key="smart_split_max_chars",
+            )
+            st.slider(
+                "Smart split max lines per slide",
+                min_value=2,
+                max_value=6,
+                key="smart_split_max_lines_per_slide",
+            )
+
+    with split_col3:
         st.write("")
         refresh_song_preview_clicked = st.button("Refresh Song Preview", use_container_width=True)
 
