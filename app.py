@@ -1324,22 +1324,30 @@ def import_service_order_from_docx(docx_file, template_sections):
 
         is_prefixed_heading = stripped.startswith(("+", "#"))
         heading_text = stripped[1:].strip() if is_prefixed_heading else stripped
-
-        if not is_prefixed_heading:
-            heading_match = match_template_section_from_heading(heading_text, template_sections)
-            if heading_match and heading_match["match_type"] in {"exact", "alias"}:
-                matched_block = block_by_section_id.get(heading_match["section_id"])
-                if matched_block is not None:
-                    current_block = matched_block
-                    section_mapping_rows.append({
-                        "docx_heading": heading_text,
-                        "mapped_section_id": heading_match["section_id"],
-                        "mapped_section_title": heading_match["section_title"],
-                        "match_type": heading_match["match_type"],
-                        "score": heading_match["score"],
-                        "source": "plain",
-                    })
-                    continue
+        
+        # apply alias BEFORE matching
+        aliased_heading = apply_docx_heading_alias(heading_text)
+        
+        heading_match = match_template_section_from_heading(
+            aliased_heading,
+            template_sections,
+        )
+        
+        # allow plain headings OR prefixed headings like "# Closing Hymn"
+        # to switch sections if they strongly match
+        if heading_match and heading_match["match_type"] in {"exact", "alias", "contains"}:
+            matched_block = block_by_section_id.get(heading_match["section_id"])
+            if matched_block is not None:
+                current_block = matched_block
+                section_mapping_rows.append({
+                    "docx_heading": heading_text,
+                    "mapped_section_id": heading_match["section_id"],
+                    "mapped_section_title": heading_match["section_title"],
+                    "match_type": heading_match["match_type"],
+                    "score": heading_match["score"],
+                    "source": "prefixed" if is_prefixed_heading else "plain",
+                })
+                continue
 
         if is_prefixed_heading:
             if current_block is not None:
