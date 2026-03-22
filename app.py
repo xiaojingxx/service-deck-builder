@@ -2164,21 +2164,28 @@ with st.sidebar:
 
             pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
 
+            # Restore selected song by stable song_id first
+            restored_index = get_flat_song_index_by_song_id(
+                setlist,
+                st.session_state.get("selected_song_id"),
+            )
+            
+            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
             if pending_index is None:
-                pending_index = st.session_state.get("setlist_selectbox_sidebar", 0)
-
+                pending_index = restored_index
+            
             try:
                 pending_index = int(pending_index)
             except Exception:
-                pending_index = 0
-
+                pending_index = restored_index
+            
             pending_index = max(0, min(pending_index, len(labels) - 1))
-
-            if "setlist_selectbox_sidebar" not in st.session_state:
-                st.session_state["setlist_selectbox_sidebar"] = pending_index
+            
+            # IMPORTANT: set widget state BEFORE the selectbox is created
+            st.session_state["setlist_selectbox_sidebar"] = pending_index
             st.session_state["setlist_selected_index"] = pending_index
-
-            previous_selected_index = st.session_state["setlist_selected_index"]
+            
+            previous_selected_index = pending_index
 
             selected_index = st.selectbox(
                 "Selected song",
@@ -2315,12 +2322,13 @@ with st.sidebar:
                 st.session_state["pending_setlist_load"] = None
                 st.session_state["setlist_selected_index"] = 0
                 st.session_state["pending_setlist_selectbox_index"] = None
+                st.session_state["selected_song_id"] = None
                 st.session_state["preview_mode"] = "song"
                 st.session_state["current_song_preview_images"] = None
                 st.session_state["current_song_preview_stats"] = None
                 clear_service_outputs()
                 st.rerun()
-                st.session_state["selected_song_id"] = None
+
 
 
     with st.expander("4. Import Order of Service", expanded=False):
