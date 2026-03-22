@@ -241,8 +241,6 @@ def split_slides_manual(text: str) -> list[list[str]]:
 
     return slides
 
-    return slides
-
 def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list[str]]:
     if lines_per_slide < 1:
         lines_per_slide = 1
@@ -352,7 +350,7 @@ def apply_docx_heading_alias(heading: str) -> str:
     simple = simplify_heading_text(heading)
 
     alias_map = {
-        "closing hymn": "response",
+        "Closing Hymn": "response",
         "closing song": "response",
         "hymn of response": "response",
         "response hymn": "response",
