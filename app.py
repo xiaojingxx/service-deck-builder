@@ -113,6 +113,7 @@ DEFAULTS = {
     "song_store": {},
     "last_docx_section_mapping": [],
     "selected_song_id": None,
+    "song_selectbox_version": 0,
 }
 
 for key, value in DEFAULTS.items():
@@ -2157,53 +2158,41 @@ with st.sidebar:
                 else:
                     labels.append(f'{i+1}. {song["title"]}{section_suffix} ({len(song["slides"])})')
 
-            st.session_state["setlist_selected_index"] = min(
-                st.session_state.get("setlist_selected_index", 0),
-                len(labels) - 1,
+            # stable song selection by song_id
+            for i, song in enumerate(setlist):
+                if not song.get("song_id"):
+                    song["song_id"] = f"song_{i}_{song.get('umh_number','')}_{song.get('title','')}"
+            
+            ids = [song.get("song_id") for song in setlist if song.get("song_id")]
+            label_map = {song["song_id"]: labels[i] for i, song in enumerate(setlist)}
+            
+            selected_song_id = st.session_state.get("selected_song_id")
+            if selected_song_id not in ids:
+                selected_song_id = ids[0]
+                st.session_state["selected_song_id"] = selected_song_id
+            
+            previous_selected_index = next(
+                (i for i, song in enumerate(setlist) if song.get("song_id") == selected_song_id),
+                0,
             )
-
-            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-
-            # Restore selected song by stable song_id first
-            restored_index = get_flat_song_index_by_song_id(
-                setlist,
-                st.session_state.get("selected_song_id"),
-            )
             
-            pending_index = st.session_state.pop("pending_setlist_selectbox_index", None)
-            if pending_index is None:
-                pending_index = restored_index
+            widget_key = f"song_select_{st.session_state.get('song_selectbox_version', 0)}"
             
-            try:
-                pending_index = int(pending_index)
-            except Exception:
-                pending_index = restored_index
-            
-            pending_index = max(0, min(pending_index, len(labels) - 1))
-            
-            # IMPORTANT: set widget state BEFORE the selectbox is created
-            st.session_state["setlist_selectbox_sidebar"] = pending_index
-            st.session_state["setlist_selected_index"] = pending_index
-            
-            previous_selected_index = pending_index
-
-            selected_index = st.selectbox(
+            selected_song_id = st.selectbox(
                 "Selected song",
-                options=list(range(len(labels))),
-                format_func=lambda i: labels[i],
-                key="setlist_selectbox_sidebar",
+                options=ids,
+                index=previous_selected_index,
+                format_func=lambda sid: label_map[sid],
+                key=widget_key,
             )
             
-            try:
-                selected_index = int(selected_index)
-            except Exception:
-                selected_index = 0
+            st.session_state["selected_song_id"] = selected_song_id
             
-            selected_index = max(0, min(selected_index, len(labels) - 1))
+            selected_index = next(
+                (i for i, song in enumerate(setlist) if song.get("song_id") == selected_song_id),
+                0,
+            )
             st.session_state["setlist_selected_index"] = selected_index
-            
-            if 0 <= selected_index < len(setlist):
-                st.session_state["selected_song_id"] = setlist[selected_index].get("song_id")
 
             if (
                 selected_index != previous_selected_index
@@ -2229,72 +2218,72 @@ with st.sidebar:
             with action_cols[1]:
                 if st.button("⬆️", use_container_width=True, help="Move selected song up") and selected_index > 0:
                     moved_song_id = setlist[selected_index].get("song_id")
-                
+            
                     setlist[selected_index - 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index - 1],
                     )
-                
+            
                     st.session_state["selected_song_id"] = moved_song_id
-                
+                    st.session_state["song_selectbox_version"] += 1
+            
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
                         st.session_state["editing_setlist_index"] = selected_index - 1
                     elif editing_index == selected_index - 1:
                         st.session_state["editing_setlist_index"] = selected_index
+            
+                        pending = st.session_state.get("pending_setlist_load")
+                        if pending == selected_index:
+                            st.session_state["pending_setlist_load"] = selected_index - 1
+                        elif pending == selected_index - 1:
+                            st.session_state["pending_setlist_load"] = selected_index
                 
-                    pending = st.session_state.get("pending_setlist_load")
-                    if pending == selected_index:
-                        st.session_state["pending_setlist_load"] = selected_index - 1
-                    elif pending == selected_index - 1:
-                        st.session_state["pending_setlist_load"] = selected_index
-                
-                    restore_selected_index_from_song_id()
-                    clear_service_outputs()
-                    st.rerun()
-
+                        clear_service_outputs()
+                        st.rerun()
+    
             with action_cols[2]:
                 if st.button("⬇️", use_container_width=True, help="Move selected song down") and selected_index < len(setlist) - 1:
                     moved_song_id = setlist[selected_index].get("song_id")
-                
+            
                     setlist[selected_index + 1], setlist[selected_index] = (
                         setlist[selected_index],
                         setlist[selected_index + 1],
                     )
-                
+            
                     st.session_state["selected_song_id"] = moved_song_id
-                
+                    st.session_state["song_selectbox_version"] += 1
+            
                     editing_index = st.session_state.get("editing_setlist_index")
                     if editing_index == selected_index:
                         st.session_state["editing_setlist_index"] = selected_index + 1
                     elif editing_index == selected_index + 1:
                         st.session_state["editing_setlist_index"] = selected_index
-                
+            
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = selected_index + 1
                     elif pending == selected_index + 1:
                         st.session_state["pending_setlist_load"] = selected_index
-                
-                    restore_selected_index_from_song_id()
+            
                     clear_service_outputs()
                     st.rerun()
-
+    
             with action_cols[3]:
                 if st.button("🗑️", use_container_width=True, help="Delete selected song"):
-                    deleted_song_id = setlist[selected_index].get("song_id")
-                
-                    # choose next selection target before deletion
-                    next_song_id = None
                     if len(setlist) > 1:
                         if selected_index < len(setlist) - 1:
-                            next_song_id = setlist[selected_index + 1].get("song_id")
+                            next_id = setlist[selected_index + 1].get("song_id")
                         else:
-                            next_song_id = setlist[selected_index - 1].get("song_id")
-                
+                            next_id = setlist[selected_index - 1].get("song_id")
+                    else:
+                        next_id = None
+            
                     setlist.pop(selected_index)
-                    st.session_state["selected_song_id"] = next_song_id
-                
+            
+                    st.session_state["selected_song_id"] = next_id
+                    st.session_state["song_selectbox_version"] += 1
+            
                     if st.session_state.get("editing_setlist_index") == selected_index:
                         st.session_state["reset_editor_pending"] = True
                     elif (
@@ -2302,32 +2291,30 @@ with st.sidebar:
                         and st.session_state["editing_setlist_index"] > selected_index
                     ):
                         st.session_state["editing_setlist_index"] -= 1
-                
+            
                     pending = st.session_state.get("pending_setlist_load")
                     if pending == selected_index:
                         st.session_state["pending_setlist_load"] = None
                     elif pending is not None and pending > selected_index:
                         st.session_state["pending_setlist_load"] = pending - 1
-                
-                    restore_selected_index_from_song_id()
+            
                     clear_service_outputs()
                     st.rerun()
-
-            if st.button("Clear Setlist", use_container_width=True, type="secondary"):
-                st.session_state["setlist"] = []
-                st.session_state["service_order_blocks"] = []
-                st.session_state["song_store"] = {}
-                st.session_state["last_docx_section_mapping"] = []
-                st.session_state["editing_setlist_index"] = None
-                st.session_state["pending_setlist_load"] = None
-                st.session_state["setlist_selected_index"] = 0
-                st.session_state["pending_setlist_selectbox_index"] = None
-                st.session_state["selected_song_id"] = None
-                st.session_state["preview_mode"] = "song"
-                st.session_state["current_song_preview_images"] = None
-                st.session_state["current_song_preview_stats"] = None
-                clear_service_outputs()
-                st.rerun()
+    
+                if st.button("Clear Setlist", use_container_width=True, type="secondary"):
+                    st.session_state["setlist"] = []
+                    st.session_state["service_order_blocks"] = []
+                    st.session_state["song_store"] = {}
+                    st.session_state["last_docx_section_mapping"] = []
+                    st.session_state["editing_setlist_index"] = None
+                    st.session_state["pending_setlist_load"] = None
+                    st.session_state["setlist_selected_index"] = 0
+                    st.session_state["selected_song_id"] = None
+                    st.session_state["preview_mode"] = "song"
+                    st.session_state["current_song_preview_images"] = None
+                    st.session_state["current_song_preview_stats"] = None
+                    clear_service_outputs()
+                    st.rerun()
 
 
 
@@ -2354,27 +2341,29 @@ with st.sidebar:
                         service_docx_file,
                         st.session_state.get("template_sections", []),
                     )
-
+        
                     st.session_state["service_order_blocks"] = service_order_blocks
                     st.session_state["song_store"] = song_store
                     st.session_state["setlist"] = flatten_blocks_to_setlist(service_order_blocks, song_store)
-                    if st.session_state["setlist"]:
-                        st.session_state["selected_song_id"] = st.session_state["setlist"][0].get("song_id")
+        
+                    ids_after_import = [s.get("song_id") for s in st.session_state["setlist"] if s.get("song_id")]
+                    if ids_after_import:
+                        if st.session_state.get("selected_song_id") not in ids_after_import:
+                            st.session_state["selected_song_id"] = ids_after_import[0]
                     else:
                         st.session_state["selected_song_id"] = None
-                    
-                    restore_selected_index_from_song_id()
+        
+                    st.session_state["song_selectbox_version"] += 1
                     st.session_state["last_docx_section_mapping"] = section_mapping_rows
-
+        
                     clear_service_outputs()
-
+        
                     st.session_state["editing_setlist_index"] = None
                     st.session_state["pending_setlist_load"] = None
                     st.session_state["setlist_selected_index"] = 0
-                    st.session_state["pending_setlist_selectbox_index"] = 0
-
-                    st.success(f"Imported {len(st.session_state["setlist"])} song(s) into the template-driven service order.")
-
+        
+                    st.success(f"Imported {len(st.session_state['setlist'])} song(s) into the template-driven service order.")
+        
                     if section_mapping_rows:
                         st.caption("Section mapping:")
                         for row in section_mapping_rows:
@@ -2383,19 +2372,18 @@ with st.sidebar:
                                 f"{row['source']} {row['docx_heading']} → {mapped}"
                                 f" ({row['match_type']}, score {row['score']})"
                             )
-
+        
                     if missing_songs:
                         st.warning(
                             f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets."
                         )
                         for song in missing_songs:
                             st.write(f"- UMH {song['umh_number']} {song['title']}")
-
+        
                     st.rerun()
-
+        
                 except Exception as e:
                     st.exception(e)
-
 
 
 # =========================================================
