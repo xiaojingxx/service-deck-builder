@@ -2299,20 +2299,20 @@ with st.sidebar:
                     clear_service_outputs()
                     st.rerun()
     
-                if st.button("Clear Setlist", use_container_width=True, type="secondary"):
-                    st.session_state["setlist"] = []
-                    st.session_state["service_order_blocks"] = []
-                    st.session_state["song_store"] = {}
-                    st.session_state["last_docx_section_mapping"] = []
-                    st.session_state["editing_setlist_index"] = None
-                    st.session_state["pending_setlist_load"] = None
-                    st.session_state["setlist_selected_index"] = 0
-                    st.session_state["selected_song_id"] = None
-                    st.session_state["preview_mode"] = "song"
-                    st.session_state["current_song_preview_images"] = None
-                    st.session_state["current_song_preview_stats"] = None
-                    clear_service_outputs()
-                    st.rerun()
+            if st.button("Clear Setlist", use_container_width=True, type="secondary"):
+                st.session_state["setlist"] = []
+                st.session_state["service_order_blocks"] = []
+                st.session_state["song_store"] = {}
+                st.session_state["last_docx_section_mapping"] = []
+                st.session_state["editing_setlist_index"] = None
+                st.session_state["pending_setlist_load"] = None
+                st.session_state["setlist_selected_index"] = 0
+                st.session_state["selected_song_id"] = None
+                st.session_state["preview_mode"] = "song"
+                st.session_state["current_song_preview_images"] = None
+                st.session_state["current_song_preview_stats"] = None
+                clear_service_outputs()
+                st.rerun()
 
 
 
