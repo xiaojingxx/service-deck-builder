@@ -320,6 +320,30 @@ def delete_slide_by_index(prs, slide_index: int):
     prs.part.drop_rel(rId)
     del prs.slides._sldIdLst[slide_index]
 
+def apply_docx_heading_alias(heading: str) -> str:
+    """
+    Map common DOCX headings to template section names.
+    This is a controlled alias layer (safe hardcoding).
+    """
+    simple = simplify_heading_text(heading)
+
+    alias_map = {
+        "closing hymn": "response",
+        "closing song": "response",
+        "hymn of response": "response",
+        "response hymn": "response",
+
+        "offertory": "tithe offering",
+        "offering": "tithe offering",
+
+        "announcements": "announcements",
+        "welcome announcements": "announcements",
+
+        "doxology": "doxology",
+        "gloria patri": "gloria patri",
+    }
+
+    return alias_map.get(simple, heading)
 
 # =========================================================
 # MOVE HELPERS
@@ -1118,7 +1142,9 @@ def match_template_section_from_heading(heading: str, template_sections: list[di
     if not template_sections or not heading:
         return None
 
+    heading = apply_docx_heading_alias(heading)
     heading_simple = simplify_heading_text(heading)
+    
     if not heading_simple:
         return None
 
