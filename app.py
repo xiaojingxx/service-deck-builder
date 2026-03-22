@@ -111,6 +111,8 @@ DEFAULTS = {
     "pending_setlist_selectbox_index": None,
     "service_order_blocks": [],
     "last_docx_section_mapping": [],
+    "song_selectbox_version": 0,
+    "selected_song_id": None
 }
 
 for key, value in DEFAULTS.items():
@@ -1920,7 +1922,7 @@ with st.sidebar:
                 0,
             )
 
-            widget_key = f"song_select_{st.session_state['song_selectbox_version']}"
+            widget_key = f"song_select_{st.session_state.get('song_selectbox_version', 0)}"
 
             selected_song_id = st.selectbox(
                 "Selected song",
