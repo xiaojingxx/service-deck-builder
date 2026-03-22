@@ -238,13 +238,17 @@ def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list
     return slides
 
 def get_current_slides(text: str) -> list[list[str]]:
+    # ALWAYS expand refrain first
+    processed_text = expand_refrain_blocks(text)
+
     if st.session_state.get("smart_split_enabled", False):
         return split_slides_balanced(
-            text,
+            processed_text,
             max_chars=st.session_state.get("smart_split_max_chars", 30),
             max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
         )
-    return split_slides_manual(text)
+
+    return split_slides_manual(processed_text)
 
 def open_presentation_from_bytes(template_bytes: bytes):
     return Presentation(BytesIO(template_bytes))
@@ -459,6 +463,67 @@ def split_slides_balanced(
         slides.append(current_slide)
 
     return slides
+
+def expand_refrain_blocks(text: str) -> str:
+    import re
+
+    if not text:
+        return text
+
+    lines = text.splitlines()
+
+    refrain_start_patterns = [
+        re.compile(r"^\s*refrain\s*:?\s*$", re.IGNORECASE),
+        re.compile(r"^\s*chorus\s*:?\s*$", re.IGNORECASE),
+    ]
+
+    refrain_ref_patterns = [
+        re.compile(r"^\s*\(?refrain\)?\s*$", re.IGNORECASE),
+        re.compile(r"^\s*\(?chorus\)?\s*$", re.IGNORECASE),
+    ]
+
+    def is_blank(line: str) -> bool:
+        return str(line).replace("\xa0", " ").strip() == ""
+
+    refrain_lines = None
+    output = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect "Refrain:" block
+        if any(p.match(line) for p in refrain_start_patterns):
+            i += 1
+            block = []
+
+            while i < len(lines) and not is_blank(lines[i]):
+                block.append(lines[i].strip())
+                i += 1
+
+            if block:
+                refrain_lines = block
+                output.extend(block)
+
+            # preserve spacing
+            if i < len(lines) and is_blank(lines[i]):
+                output.append("")
+            i += 1
+            continue
+
+        # Replace "(Refrain)" later
+        if any(p.match(line) for p in refrain_ref_patterns):
+            if refrain_lines:
+                output.extend(refrain_lines)
+            else:
+                output.append(line)
+            i += 1
+            continue
+
+        output.append(line)
+        i += 1
+
+    return "\n".join(output)
 
 # =========================================================
 # MOVE HELPERS
