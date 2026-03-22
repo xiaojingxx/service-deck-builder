@@ -2512,10 +2512,6 @@ with main_left:
     with split_col1:
         st.checkbox("Auto split by lines per slide", key="auto_split_by_lines")
         st.slider("Lines per slide", min_value=1, max_value=8, key="lines_per_slide")
-        st.checkbox(
-            "Refresh preview only when a new slide break is detected",
-            key="refresh_on_new_line",
-        )
 
     with split_col2:
         st.checkbox("Enable smart split for long lyric lines", key="smart_split_enabled")
