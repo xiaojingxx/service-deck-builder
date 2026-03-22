@@ -85,8 +85,6 @@ DEFAULTS = {
     "editor_override_line_spacing": False,
     "editor_lyrics_font_size_pt": 32,
     "editor_line_spacing": 1.2,
-    "auto_split_by_lines": False,
-    "lines_per_slide": 4,
     "refresh_on_new_line": True,
     "editor_ace_key": 0,
     "last_editor_text": "",
