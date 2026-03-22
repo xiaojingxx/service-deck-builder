@@ -246,7 +246,6 @@ def get_current_slides(text: str) -> list[list[str]]:
         )
     return split_slides_manual(text)
 
-
 def open_presentation_from_bytes(template_bytes: bytes):
     return Presentation(BytesIO(template_bytes))
 
@@ -668,9 +667,7 @@ def build_current_song_signature(song_item, selected_template_name):
         song_item.get("lyrics_font_size_pt"),
         song_item.get("line_spacing"),
         song_item.get("section_id"),
-        selected_template_name,
-        st.session_state["auto_split_by_lines"],
-        st.session_state["lines_per_slide"],
+        selected_template_name
     )
 
 
@@ -2548,11 +2545,11 @@ with main_left:
     current_slides = get_current_slides(editor_text)
     song_item = build_editor_song_item(current_slides)
 
-    if st.session_state["auto_split_by_lines"]:
-        st.session_state["smart_split_enabled"] = False
+    if st.session_state.get("smart_split_enabled", False):
         st.caption(
             f"{len(current_slides)} slide(s) "
-            f"({st.session_state['lines_per_slide']} lines per slide, blank lines kept as verse separators)"
+            f"(smart split: max {st.session_state.get('smart_split_max_chars', 30)} chars, "
+            f"{st.session_state.get('smart_split_max_lines_per_slide', 4)} lines per slide)"
         )
     else:
         st.caption(f"{len(current_slides)} slide(s) (manual mode: blank lines separate slides)")
@@ -2576,55 +2573,46 @@ with main_left:
                 st.rerun()
             except Exception as e:
                 st.error(preview_error_message(e))
-
-    text_changed = editor_text != old_text
-    trigger_refresh = False
-    current_split_settings = (
-        st.session_state["auto_split_by_lines"],
-        st.session_state["lines_per_slide"],
-    )
-
-    if st.session_state["auto_split_by_lines"]:
-        trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
-    else:
-        trigger_refresh = blank_separator_added(old_text, editor_text)
-
-    if text_changed and trigger_refresh:
-        if not st.session_state["auto_split_by_lines"]:
-            blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
-            if blank_idx is not None:
-                lines = editor_text.splitlines()
-                target_line_index = None
-                for i in range(blank_idx + 1, len(lines)):
-                    if lines[i].strip() != "":
-                        target_line_index = i
-                        break
-
-                detected_slide = get_slide_number_from_line_index(
-                    editor_text,
-                    target_line_index,
-                    auto_split=False,
-                    lines_per_slide=st.session_state["lines_per_slide"],
-                )
-                if detected_slide is not None:
-                    st.session_state["current_preview_slide"] = detected_slide
+                
+        text_changed = editor_text != old_text
+        trigger_refresh = False
+        smart_split = st.session_state.get("smart_split_enabled", False)
+        
+        if smart_split:
+            trigger_refresh = get_current_slides(old_text) != get_current_slides(editor_text)
         else:
-            target_line_index = detect_new_slide_target_line(old_text, editor_text)
-            detected_slide = get_slide_number_from_line_index(
-                editor_text,
-                target_line_index,
-                auto_split=True,
-                lines_per_slide=st.session_state["lines_per_slide"],
-            )
-            if detected_slide is not None:
-                st.session_state["current_preview_slide"] = detected_slide
-
-    st.session_state["last_editor_text"] = editor_text
-    st.session_state["last_split_settings"] = current_split_settings
-
-    if st.session_state["editor_status_message"]:
-        st.caption(st.session_state["editor_status_message"])
-
+            trigger_refresh = blank_separator_added(old_text, editor_text)
+        
+        if text_changed and trigger_refresh:
+            if not smart_split:
+                blank_idx = get_first_new_blank_separator_index(old_text, editor_text)
+                if blank_idx is not None:
+                    lines = editor_text.splitlines()
+                    target_line_index = None
+                    for i in range(blank_idx + 1, len(lines)):
+                        if lines[i].strip() != "":
+                            target_line_index = i
+                            break
+        
+                    detected_slide = get_slide_number_from_line_index(
+                        editor_text,
+                        target_line_index,
+                        auto_split=False,
+                        lines_per_slide=4,
+                    )
+                    if detected_slide is not None:
+                        st.session_state["current_preview_slide"] = detected_slide
+            else:
+                # Smart split can rebalance multiple lines/slides,
+                # so exact slide detection from the old fixed-line logic is unreliable.
+                st.session_state["current_preview_slide"] = 1
+        
+        st.session_state["last_editor_text"] = editor_text
+        st.session_state["last_split_settings"] = current_split_settings
+        
+        if st.session_state["editor_status_message"]:
+            st.caption(st.session_state["editor_status_message"])
+    
     st.markdown("#### Song Formatting")
 
     fmt_col1, fmt_col2 = st.columns(2)
