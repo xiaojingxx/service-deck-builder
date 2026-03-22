@@ -1108,29 +1108,69 @@ def parse_umh_song_line(line: str) -> dict:
 
 
 def match_template_section_from_heading(heading: str, template_sections: list[dict]) -> dict | None:
+    """
+    Robust heading-to-template matcher.
+
+    Handles cases like:
+    - "Call to Worship (based on Ps 130:5-7)"
+    - "CALL TO\u000bWORSHIP"
+    """
     if not template_sections or not heading:
         return None
 
+    heading_simple = simplify_heading_text(heading)
+    if not heading_simple:
+        return None
+
     best = None
+
     for sec in template_sections:
-        score, match_type = score_section_match(heading, sec["title"])
+        template_simple = simplify_heading_text(sec["title"])
+
+        score = 0
+        match_type = "none"
+
+        if heading_simple == template_simple:
+            score = 100
+            match_type = "exact"
+
+        elif heading_simple.startswith(template_simple) or template_simple.startswith(heading_simple):
+            score = 98
+            match_type = "alias"
+
+        elif heading_simple in template_simple or template_simple in heading_simple:
+            score = 95
+            match_type = "contains"
+
+        else:
+            heading_tokens = set(heading_simple.split())
+            template_tokens = set(template_simple.split())
+            overlap = heading_tokens & template_tokens
+
+            if heading_tokens and template_tokens and overlap:
+                ratio = len(overlap) / max(1, min(len(heading_tokens), len(template_tokens)))
+                if ratio >= 0.75:
+                    score = 90
+                    match_type = "alias"
+                elif ratio >= 0.5:
+                    score = 75
+                    match_type = "token-overlap"
+
         candidate = {
             "section_id": sec["id"],
             "section_title": sec["title"],
             "score": score,
             "match_type": match_type,
             "docx_heading": heading,
-            "docx_heading_canonical": canonicalize_section_label(heading),
-            "template_heading_canonical": canonicalize_section_label(sec["title"]),
         }
+
         if best is None or candidate["score"] > best["score"]:
             best = candidate
 
-    if best and best["score"] >= 60:
+    if best and best["score"] >= 90:
         return best
+
     return None
-
-
 
 def section_id_from_heading(heading: str, template_sections: list[dict]) -> str | None:
     match = match_template_section_from_heading(heading, template_sections)
