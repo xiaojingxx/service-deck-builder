@@ -984,12 +984,34 @@ def normalize_text(s: str) -> str:
 
 
 def simplify_heading_text(s: str) -> str:
-    s = normalize_text(s)
-    s = re.sub(r"\([^)]*\)", " ", s)
-    s = re.sub(r"[^a-z0-9& ]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    """
+    Normalize headings so variations like:
+    - 'CALL TO\u000bWORSHIP'
+    - 'Call to Worship (based on Ps 130:5-7)'
+    all become:
+    - 'call to worship'
+    """
+    s = str(s or "")
 
+    # Remove vertical tabs from PPT titles
+    s = s.replace("\u000b", " ")
+
+    # Remove parenthetical notes
+    s = re.sub(r"\([^)]*\)", " ", s)
+
+    # Normalize
+    s = s.lower().strip()
+
+    # Normalize symbols
+    s = s.replace("&", " and ")
+
+    # Remove punctuation
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+
+    # Collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+
+    return s
 
 
 def canonicalize_section_label(label: str) -> str:
@@ -1016,30 +1038,38 @@ def heading_tokens(s: str) -> set[str]:
 
 
 def score_section_match(docx_heading: str, template_title: str) -> tuple[int, str]:
+    """
+    Score similarity between DOCX heading and template section title.
+    Returns (score, match_type).
+    """
     docx_simple = simplify_heading_text(docx_heading)
     tmpl_simple = simplify_heading_text(template_title)
+
     if not docx_simple or not tmpl_simple:
         return 0, "none"
 
-    docx_canonical = canonicalize_section_label(docx_heading)
-    tmpl_canonical = canonicalize_section_label(template_title)
-
+    # Exact match after normalization
     if docx_simple == tmpl_simple:
         return 100, "exact"
-    if docx_canonical and docx_canonical == tmpl_canonical:
-        return 95, "alias"
-    if docx_simple in tmpl_simple or tmpl_simple in docx_simple:
-        return 88, "contains"
 
-    docx_tokens = heading_tokens(docx_heading)
-    tmpl_tokens = heading_tokens(template_title)
+    docx_tokens = set(docx_simple.split())
+    tmpl_tokens = set(tmpl_simple.split())
+
+    # Same tokens but different order/format
+    if docx_tokens == tmpl_tokens:
+        return 96, "alias"
+
+    # Substring containment
+    if docx_simple in tmpl_simple or tmpl_simple in docx_simple:
+        return 90, "contains"
+
+    # Partial token overlap
     overlap = docx_tokens & tmpl_tokens
     if overlap:
-        score = 60 + min(25, 8 * len(overlap))
+        score = 60 + min(20, 10 * len(overlap))
         return score, "token-overlap"
 
     return 0, "none"
-
 
 
 def read_docx_lines(docx_file) -> list[str]:
