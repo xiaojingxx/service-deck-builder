@@ -519,6 +519,15 @@ def validate_template_bytes(template_bytes: bytes):
 # SONG / SECTION HELPERS
 # =========================================================
 def build_editor_song_item(current_slides):
+    # ✅ ensure section always exists
+    section_id = st.session_state.get("selected_song_section_id")
+
+    if not section_id:
+        default_section = pick_default_service_section(
+            st.session_state.get("template_sections", [])
+        )
+        section_id = default_section["id"] if default_section else None
+
     return {
         "umh_number": st.session_state["editor_umh"].strip(),
         "title": st.session_state["editor_title"].strip(),
@@ -535,7 +544,7 @@ def build_editor_song_item(current_slides):
         ),
         "override_lyrics_font_size": st.session_state["editor_override_lyrics_font_size"],
         "override_line_spacing": st.session_state["editor_override_line_spacing"],
-        "section_id": st.session_state.get("selected_song_section_id"),
+        "section_id": section_id,   # 🔥 FIX
     }
 
 
