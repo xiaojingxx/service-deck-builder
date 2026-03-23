@@ -1586,7 +1586,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                 if song:
                     ordered_song_pairs.append((item["song_id"], song))
 
-    # songs-only mode
     if output_mode == "songs":
         delete_all_slides(prs)
         for _, song in ordered_song_pairs:
@@ -1597,9 +1596,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    # full mode:
-    # do NOT delete template slides
-    # only insert songs and move the newly created block
+    # 1. Insert songs first
     for block in service_order_blocks:
         sec_title = block.get("section_title")
         section_song_pairs = []
@@ -1614,23 +1611,31 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         if not section_song_pairs:
             continue
 
-        # unassigned songs go to end
         if block.get("section_id") is None:
             add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
             continue
 
         target_idx = find_section_insert_index(prs, sec_title)
 
-        # add at end first
         start_idx, end_idx = add_section_song_block_to_prs(
             prs,
             section_song_pairs,
             first_layout,
             rest_layout,
         )
-
-        # move ONLY the newly inserted block
         move_slide_block(prs, start_idx, end_idx, target_idx)
+
+    # 2. Delete old template content slides AFTER insertion
+    hidden_ids = set(st.session_state.get("hidden_section_ids", []))
+    sections = st.session_state.get("template_sections", [])
+
+    slides_to_delete = []
+    for sec in sections:
+        if sec["id"] in hidden_ids:
+            slides_to_delete.extend(sec.get("content_slide_indices", []))
+
+    for idx in sorted(set(slides_to_delete), reverse=True):
+        delete_slide_by_index(prs, idx)
 
     output = BytesIO()
     prs.save(output)
