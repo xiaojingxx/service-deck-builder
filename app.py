@@ -1578,50 +1578,64 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
     output_mode = st.session_state.get("service_output_mode", "full")
 
-    # =========================
-    # 1. SONGS ONLY MODE
-    # =========================
-    if output_mode == "songs":
-        delete_all_slides(prs)
-
-        for block in service_order_blocks:
-            for item in block.get("items", []):
-                if item.get("type") != "song":
-                    continue
+    ordered_song_pairs = []
+    for block in service_order_blocks:
+        for item in block.get("items", []):
+            if item.get("type") == "song":
                 song = song_store.get(item.get("song_id"))
                 if song:
-                    add_song_block_to_prs(prs, song, first_layout, rest_layout)
+                    ordered_song_pairs.append((item["song_id"], song))
+
+    # songs-only mode
+    if output_mode == "songs":
+        delete_all_slides(prs)
+        for _, song in ordered_song_pairs:
+            add_song_block_to_prs(prs, song, first_layout, rest_layout)
 
         output = BytesIO()
         prs.save(output)
         output.seek(0)
         return output
 
-    # =========================
-    # 2. FULL SERVICE MODE (SAFE)
-    # =========================
-
-    # DO NOT DELETE ANY TEMPLATE SLIDES
-    # DO NOT MOVE SLIDES
-
-    # Just append songs in correct order
-
+    # full mode:
+    # do NOT delete template slides
+    # only insert songs and move the newly created block
     for block in service_order_blocks:
+        sec_title = block.get("section_title")
+        section_song_pairs = []
+
         for item in block.get("items", []):
             if item.get("type") != "song":
                 continue
-
             song = song_store.get(item.get("song_id"))
-            if not song:
-                continue
+            if song:
+                section_song_pairs.append((item["song_id"], song))
 
-            add_song_block_to_prs(prs, song, first_layout, rest_layout)
+        if not section_song_pairs:
+            continue
+
+        # unassigned songs go to end
+        if block.get("section_id") is None:
+            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
+            continue
+
+        target_idx = find_section_insert_index(prs, sec_title)
+
+        # add at end first
+        start_idx, end_idx = add_section_song_block_to_prs(
+            prs,
+            section_song_pairs,
+            first_layout,
+            rest_layout,
+        )
+
+        # move ONLY the newly inserted block
+        move_slide_block(prs, start_idx, end_idx, target_idx)
 
     output = BytesIO()
     prs.save(output)
     output.seek(0)
     return output
-
 
 def create_single_song_ppt(song_item, template_bytes: bytes):
     prs = open_presentation_from_bytes(template_bytes)
