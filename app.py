@@ -579,6 +579,56 @@ def get_slide_obj_by_slide_id(prs, slide_id: int):
             return slide
     raise ValueError(f"Slide id {slide_id} not found")
 
+def get_live_index_by_slide_id(prs, slide_id: int) -> int:
+    for idx, slide in enumerate(prs.slides):
+        if slide.slide_id == slide_id:
+            return idx
+    raise ValueError(f"Slide id {slide_id} not found")
+
+
+def build_divider_anchor_map(prs):
+    """
+    Returns:
+      ordered_dividers: list of (section_title, slide_id)
+      by_title: dict normalized_title -> slide_id
+    """
+    ordered_dividers = []
+    by_title = {}
+
+    for slide in prs.slides:
+        if is_divider_slide(slide):
+            title = get_divider_title(slide)
+            norm = canonicalize_section_label(title)
+            ordered_dividers.append((norm, slide.slide_id))
+            by_title[norm] = slide.slide_id
+
+    return ordered_dividers, by_title
+
+
+def find_section_insert_index_from_anchors(prs, section_title: str) -> int:
+    """
+    Insert AFTER this section's existing content, i.e. before the NEXT divider.
+    If this is the last section, insert at end of current deck.
+    """
+    ordered_dividers, _ = build_divider_anchor_map(prs)
+    target_norm = canonicalize_section_label(section_title)
+
+    match_idx = None
+    for i, (norm, slide_id) in enumerate(ordered_dividers):
+        if norm == target_norm:
+            match_idx = i
+            break
+
+    if match_idx is None:
+        # fail loud instead of silently doing nothing
+        raise ValueError(f"Could not find divider for section: {section_title!r}")
+
+    # insert before next divider
+    if match_idx + 1 < len(ordered_dividers):
+        next_divider_id = ordered_dividers[match_idx + 1][1]
+        return get_live_index_by_slide_id(prs, next_divider_id)
+
+    return len(prs.slides)
 
 # =========================================================
 # TEMPLATE / SECTION HELPERS
@@ -1726,55 +1776,54 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             raise ValueError(f"Slide id {target_slide_id} not found in current deck")
 
         # Track each block by actual slide objects, in original order
+        # Track each block by slide_id, not start/end/count
         block_slide_ids = {
             i: [prs.slides[j].slide_id for j in range(rec["start_idx"], rec["end_idx"] + 1)]
             for i, rec in enumerate(block_records)
         }
 
+        def get_slide_obj_by_slide_id(prs, slide_id: int):
+            for slide in prs.slides:
+                if slide.slide_id == slide_id:
+                    return slide
+            raise ValueError(f"Slide id {slide_id} not found")
+
         def move_block_with_interface(block_idx: int, target_idx: int):
             slide_ids = block_slide_ids[block_idx]
             if not slide_ids:
                 return
-        
+
             live_indices = [get_live_index_by_slide_id(ppt.prs, sid) for sid in slide_ids]
             block_start = min(live_indices)
             block_end = max(live_indices)
             count = len(slide_ids)
-        
-            # no-op if already there
+
+            # no-op only if target is already inside the block region
             if block_start <= target_idx <= block_end + 1:
                 return
-        
-            # when moving a block downward, removing it first shifts target left
+
             adjusted_target = target_idx if target_idx < block_start else target_idx - count
-        
-            # move slides in original order
+
+            # move in original order
             for offset, sid in enumerate(slide_ids):
                 desired_idx = adjusted_target + offset
-                slide_obj = get_slide_obj_by_slide_id(ppt.prs, sid)
                 current_idx = get_live_index_by_slide_id(ppt.prs, sid)
-        
+                slide_obj = get_slide_obj_by_slide_id(ppt.prs, sid)
+
                 if current_idx != desired_idx:
                     ppt.move_slide(slide_obj, desired_idx)
-            
-        # Reorder each block to its target section
+
+        # move from last block to first block
         for i in range(len(block_records) - 1, -1, -1):
             block = block_records[i]
             section_id = block["section_id"]
-        
+            section_title = block["section_title"]
+
             if section_id is None:
                 continue
-        
-            target_idx = find_section_insert_index_by_id(ppt.prs, section_id)
-            st.write(
-                "BLOCK",
-                i,
-                "section_id=", section_id,
-                "target_idx=", target_idx,
-                "total_slides=", len(ppt.prs.slides),
-            )
+
+            target_idx = find_section_insert_index_from_anchors(ppt.prs, section_title)
             move_block_with_interface(i, target_idx)
-            ppt.save(final_path)
 
         # Final save
         ppt.save(final_path)
