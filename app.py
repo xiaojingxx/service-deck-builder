@@ -611,21 +611,33 @@ def find_section_insert_index_from_anchors(slides, section_title: str) -> int:
         if is_divider_slide(slide):
             title = get_divider_title(slide)
             norm = canonicalize_section_label(title)
-            ordered_dividers.append((norm, slide.slide_id))
+            ordered_dividers.append((title, norm, slide.slide_id))
 
     target_norm = canonicalize_section_label(section_title)
 
+    # 1. exact canonical match
     match_idx = None
-    for i, (norm, slide_id) in enumerate(ordered_dividers):
+    for i, (_, norm, _) in enumerate(ordered_dividers):
         if norm == target_norm:
             match_idx = i
             break
 
+    # 2. contains fallback
     if match_idx is None:
-        raise ValueError(f"Could not find divider for section: {section_title!r}")
+        for i, (_, norm, _) in enumerate(ordered_dividers):
+            if target_norm and (target_norm in norm or norm in target_norm):
+                match_idx = i
+                break
+
+    if match_idx is None:
+        available = [raw for raw, _, _ in ordered_dividers]
+        raise ValueError(
+            f"Could not find divider for section: {section_title!r}. "
+            f"Available dividers: {available}"
+        )
 
     if match_idx + 1 < len(ordered_dividers):
-        next_divider_id = ordered_dividers[match_idx + 1][1]
+        next_divider_id = ordered_dividers[match_idx + 1][2]
         return get_live_index_by_slide_id(slides, next_divider_id)
 
     return len(slides)
