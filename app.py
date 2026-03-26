@@ -529,6 +529,17 @@ def expand_refrain_blocks(text: str) -> str:
 # =========================================================
 # MOVE HELPERS
 # =========================================================
+def get_live_index_by_slide_id(slides, slide_id: int) -> int:
+    """
+    Find the current (live) index of a slide using its slide_id.
+
+    slides: ppt.prs.slides
+    slide_id: int
+    """
+    for idx, slide in enumerate(slides):
+        if slide.slide_id == slide_id:
+            return idx
+    raise ValueError(f"Slide id {slide_id} not found")
 
 def get_slide_obj_by_slide_id(slides, slide_id: int):
     for slide in slides:
