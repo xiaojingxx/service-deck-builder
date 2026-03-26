@@ -1748,7 +1748,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                 desired_idx = target_idx + offset
 
                 if current_slide_idx != desired_idx:
-                    slide_obj = ppt.slides[current_slide_idx]
+                    slide_obj = ppt.prs.slides[current_slide_idx]
                     ppt.move_slide(slide_obj, desired_idx)
                     update_positions_after_single_move(current_slide_idx, desired_idx)
 
