@@ -1763,6 +1763,8 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             }
         )
 
+    section_anchor_map = build_section_anchor_map(prs)
+    
     # Save intermediate PPTX so PPTXCreator can work on it
     with tempfile.TemporaryDirectory() as tmpdir:
         intermediate_path = os.path.join(tmpdir, "combined_before_reorder.pptx")
@@ -1793,32 +1795,26 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             for i, rec in enumerate(block_records)
         }
 
-        def get_slide_obj_by_slide_id(prs, slide_id: int):
-            for slide in prs.slides:
-                if slide.slide_id == slide_id:
-                    return slide
-            raise ValueError(f"Slide id {slide_id} not found")
-
         def move_block_with_interface(block_idx: int, target_idx: int):
             slide_ids = block_slide_ids[block_idx]
             if not slide_ids:
                 return
-        
-            live_indices = [get_live_index_by_slide_id(ppt.slides, sid) for sid in slide_ids]
+
+            live_indices = [get_live_index_by_slide_id(ppt.prs.slides, sid) for sid in slide_ids]
             block_start = min(live_indices)
             block_end = max(live_indices)
             count = len(slide_ids)
-        
+
             if block_start <= target_idx <= block_end + 1:
                 return
-        
+
             adjusted_target = target_idx if target_idx < block_start else target_idx - count
-        
+
             for offset, sid in enumerate(slide_ids):
                 desired_idx = adjusted_target + offset
-                current_idx = get_live_index_by_slide_id(ppt.slides, sid)
-                slide_obj = get_slide_obj_by_slide_id(ppt.slides, sid)
-        
+                current_idx = get_live_index_by_slide_id(ppt.prs.slides, sid)
+                slide_obj = get_slide_obj_by_slide_id(ppt.prs.slides, sid)
+
                 if current_idx != desired_idx:
                     ppt.move_slide(slide_obj, desired_idx)
 
@@ -1831,10 +1827,13 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             if section_id is None:
                 continue
 
-            target_idx = find_section_insert_index_from_anchors(ppt.slides, section_title)
+            target_idx = find_section_insert_index_from_anchor_map(
+                ppt.prs.slides,
+                section_title,
+                section_anchor_map,
+            )
             move_block_with_interface(i, target_idx)
 
-        # Final save
         ppt.save(final_path)
 
         with open(final_path, "rb") as f:
