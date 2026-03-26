@@ -1699,73 +1699,77 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
         # Track current live positions of appended blocks
         current_positions = {
-            i: {
-                "start": rec["start_idx"],
-                "end": rec["end_idx"],
-                "count": rec["slide_count"],
-            }
+            i: list(range(rec["start_idx"], rec["end_idx"] + 1))
             for i, rec in enumerate(block_records)
         }
 
         def update_positions_after_single_move(moved_from: int, moved_to: int):
             """
-            Update tracked block start/end positions after ONE slide move.
+            Update every tracked live slide index after ONE slide move.
+            current_positions[block_idx] is a list of live indices for that block.
             """
-            for rec in current_positions.values():
-                # Update start
-                if rec["start"] == moved_from:
-                    rec["start"] = moved_to
-                elif moved_from < moved_to:
-                    if moved_from < rec["start"] <= moved_to:
-                        rec["start"] -= 1
-                else:
-                    if moved_to <= rec["start"] < moved_from:
-                        rec["start"] += 1
-
-                # Update end
-                if rec["end"] == moved_from:
-                    rec["end"] = moved_to
-                elif moved_from < moved_to:
-                    if moved_from < rec["end"] <= moved_to:
-                        rec["end"] -= 1
-                else:
-                    if moved_to <= rec["end"] < moved_from:
-                        rec["end"] += 1
+            for block_idx, idx_list in current_positions.items():
+                new_list = []
+        
+                for idx in idx_list:
+                    if idx == moved_from:
+                        new_list.append(moved_to)
+                    elif moved_from < moved_to:
+                        # slide moved downward; slides in between shift left
+                        if moved_from < idx <= moved_to:
+                            new_list.append(idx - 1)
+                        else:
+                            new_list.append(idx)
+                    else:
+                        # slide moved upward; slides in between shift right
+                        if moved_to <= idx < moved_from:
+                            new_list.append(idx + 1)
+                        else:
+                            new_list.append(idx)
+        
+                current_positions[block_idx] = sorted(new_list)
 
         def move_block_with_interface(block_idx: int, target_idx: int):
-            rec = current_positions[block_idx]
-            start = rec["start"]
-            end = rec["end"]
-            count = rec["count"]
+            """
+            Move a contiguous block using PPTXCreator.move_slide(), preserving order.
+            Uses explicit live index tracking for every slide in the block.
+            """
+            live_indices = current_positions[block_idx]
+            count = len(live_indices)
         
-            if count <= 1:
-                if start != target_idx:
-                    slide_obj = ppt.prs.slides[start]
-                    ppt.move_slide(slide_obj, target_idx)
-                    update_positions_after_single_move(start, target_idx)
+            if count == 0:
                 return
         
-            # No-op
-            if target_idx >= start and target_idx <= end + 1:
+            block_start = min(live_indices)
+            block_end = max(live_indices)
+        
+            # No-op if target is already inside the block
+            if block_start <= target_idx <= block_end + 1:
                 return
         
-            # 🔥 Moving UP (earlier)
-            if target_idx < start:
+            # Moving earlier in the deck
+            if target_idx < block_start:
+                # move from back to front
                 for offset in range(count):
-                    current_end = current_positions[block_idx]["end"]
-                    slide_obj = ppt.prs.slides[current_end]
+                    current_live_indices = current_positions[block_idx]
+                    slide_to_move_idx = max(current_live_indices)
+                    insert_at = target_idx + offset
         
-                    ppt.move_slide(slide_obj, target_idx + offset)   # ✅ FIX
-                    update_positions_after_single_move(current_end, target_idx + offset)
+                    slide_obj = ppt.prs.slides[slide_to_move_idx]
+                    ppt.move_slide(slide_obj, insert_at)
+                    update_positions_after_single_move(slide_to_move_idx, insert_at)
         
-            # 🔥 Moving DOWN (later)
+            # Moving later in the deck
             else:
+                # move from front to back
                 for offset in range(count):
-                    current_start = current_positions[block_idx]["start"]
-                    slide_obj = ppt.prs.slides[current_start]
+                    current_live_indices = current_positions[block_idx]
+                    slide_to_move_idx = min(current_live_indices)
+                    insert_at = target_idx - 1 + offset
         
-                    ppt.move_slide(slide_obj, target_idx - 1 + offset)   # ✅ FIX
-                    update_positions_after_single_move(current_start, target_idx - 1 + offset)
+                    slide_obj = ppt.prs.slides[slide_to_move_idx]
+                    ppt.move_slide(slide_obj, insert_at)
+                    update_positions_after_single_move(slide_to_move_idx, insert_at)
             
         # Reorder each block to its target section
         for i, block in enumerate(block_records):
