@@ -529,6 +529,7 @@ def expand_refrain_blocks(text: str) -> str:
 # =========================================================
 # MOVE HELPERS
 # =========================================================
+"""
 def move_slide(prs, from_idx: int, to_idx: int):
     sldIdLst = prs.slides._sldIdLst
 
@@ -542,7 +543,7 @@ def move_slide(prs, from_idx: int, to_idx: int):
         to_idx -= 1
 
     sldIdLst.insert(to_idx, slide_id)
-
+"""
 
 def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
     sldIdLst = prs.slides._sldIdLst
