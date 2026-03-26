@@ -638,6 +638,14 @@ def get_section_title_by_id(section_id):
             return sec["title"]
     return None
 
+def find_section_insert_index_by_id(prs, section_id: str):
+    sections = st.session_state.get("template_sections", []) or []
+    sec = next((s for s in sections if s["id"] == section_id), None)
+    if not sec:
+        return len(prs.slides)
+
+    return find_section_insert_index(prs, sec["title"])
+
 
 def get_current_divider_positions(prs):
     positions = []
@@ -1753,12 +1761,18 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         for i in range(len(block_records) - 1, -1, -1):
             block = block_records[i]
             section_id = block["section_id"]
-            section_title = block["section_title"]
         
             if section_id is None:
                 continue
         
-            target_idx = find_section_insert_index(ppt.prs, section_title)
+            target_idx = find_section_insert_index_by_id(ppt.prs, section_id)
+            st.write(
+                "BLOCK",
+                i,
+                "section_id=", section_id,
+                "target_idx=", target_idx,
+                "total_slides=", len(ppt.prs.slides),
+            )
             move_block_with_interface(i, target_idx)
             ppt.save(final_path)
 
