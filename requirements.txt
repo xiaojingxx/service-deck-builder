@@ -6,3 +6,4 @@ google-auth
 python-pptx
 psutil
 python-docx
+pptx_interface
