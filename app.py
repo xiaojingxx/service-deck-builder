@@ -1733,13 +1733,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                         rec["end"] += 1
 
         def move_block_with_interface(block_idx: int, target_idx: int):
-            """
-            Move a contiguous block using PPTXCreator.move_slide(), preserving order.
-        
-            Rule:
-            - moving upward  -> move from back to front
-            - moving downward -> move from front to back
-            """
             rec = current_positions[block_idx]
             start = rec["start"]
             end = rec["end"]
@@ -1752,28 +1745,28 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                     update_positions_after_single_move(start, target_idx)
                 return
         
-            # No-op if target is already inside the block region
+            # No-op
             if target_idx >= start and target_idx <= end + 1:
                 return
         
-            # Moving block earlier in deck
+            # 🔥 Moving UP (earlier)
             if target_idx < start:
-                # move from back to front, always into target_idx
-                for _ in range(count):
+                for offset in range(count):
                     current_end = current_positions[block_idx]["end"]
                     slide_obj = ppt.prs.slides[current_end]
-                    ppt.move_slide(slide_obj, target_idx)
-                    update_positions_after_single_move(current_end, target_idx)
         
-            # Moving block later in deck
+                    ppt.move_slide(slide_obj, target_idx + offset)   # ✅ FIX
+                    update_positions_after_single_move(current_end, target_idx + offset)
+        
+            # 🔥 Moving DOWN (later)
             else:
-                # move from front to back, always to the slot just after the block's destination
-                for _ in range(count):
+                for offset in range(count):
                     current_start = current_positions[block_idx]["start"]
                     slide_obj = ppt.prs.slides[current_start]
-                    ppt.move_slide(slide_obj, target_idx - 1)
-                    update_positions_after_single_move(current_start, target_idx - 1)
-
+        
+                    ppt.move_slide(slide_obj, target_idx - 1 + offset)   # ✅ FIX
+                    update_positions_after_single_move(current_start, target_idx - 1 + offset)
+            
         # Reorder each block to its target section
         for i, block in enumerate(block_records):
             section_id = block["section_id"]
