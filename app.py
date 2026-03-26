@@ -322,7 +322,7 @@ def apply_docx_heading_alias(heading: str) -> str:
     simple = simplify_heading_text(heading)
 
     alias_map = {
-        "Closing Hymn": "response",
+        "closing Hymn": "response",
         "closing song": "response",
         "hymn of response": "response",
         "response hymn": "response",
@@ -530,49 +530,6 @@ def expand_refrain_blocks(text: str) -> str:
 # MOVE HELPERS
 # =========================================================
 
-def move_slide(prs, from_idx: int, to_idx: int):
-    sldIdLst = prs.slides._sldIdLst
-
-    if from_idx == to_idx:
-        return
-
-    slide_id = sldIdLst[from_idx]
-    del sldIdLst[from_idx]
-
-    if to_idx > from_idx:
-        to_idx -= 1
-
-    sldIdLst.insert(to_idx, slide_id)
-
-def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
-    sldIdLst = prs.slides._sldIdLst
-
-    if start_idx > end_idx:
-        start_idx, end_idx = end_idx, start_idx
-
-    block_len = end_idx - start_idx + 1
-
-    if target_idx >= start_idx and target_idx <= end_idx + 1:
-        return
-
-    block = [sldIdLst[i] for i in range(start_idx, end_idx + 1)]
-
-    for _ in range(block_len):
-        del sldIdLst[start_idx]
-
-    if target_idx > end_idx:
-        target_idx -= block_len
-
-    for offset, slide_id in enumerate(block):
-        sldIdLst.insert(target_idx + offset, slide_id)
-
-def get_live_index_by_slide_id(slides, slide_id: int) -> int:
-    for idx, slide in enumerate(slides):
-        if slide.slide_id == slide_id:
-            return idx
-    raise ValueError(f"Slide id {slide_id} not found")
-
-
 def get_slide_obj_by_slide_id(slides, slide_id: int):
     for slide in slides:
         if slide.slide_id == slide_id:
@@ -696,54 +653,10 @@ def get_section_title_by_id(section_id):
             return sec["title"]
     return None
 
-def find_section_insert_index_by_id(prs, section_id: str):
-    sections = st.session_state.get("template_sections", []) or []
-    sec = next((s for s in sections if s["id"] == section_id), None)
-    if not sec:
-        return len(prs.slides)
-
-    return find_section_insert_index(prs, sec["title"])
-
-
-def get_current_divider_positions(prs):
-    positions = []
-    for i, slide in enumerate(prs.slides):
-        if is_divider_slide(slide):
-            positions.append((i, get_divider_title(slide)))
-    return positions
-
-
 def canonicalize_section_label(s: str) -> str:
     s = str(s or "").strip().lower()
     s = re.sub(r"\s+", " ", s)
     return s
-
-
-
-def find_section_insert_index(prs, section_title: str):
-    divider_positions = get_current_divider_positions(prs)
-    target_norm = canonicalize_section_label(section_title)
-
-    match_index = None
-    for idx, (_, title) in enumerate(divider_positions):
-        if canonicalize_section_label(title) == target_norm:
-            match_index = idx
-            break
-
-    if match_index is None:
-        for idx, (_, title) in enumerate(divider_positions):
-            title_norm = canonicalize_section_label(title)
-            if target_norm and (target_norm in title_norm or title_norm in target_norm):
-                match_index = idx
-                break
-
-    if match_index is None:
-        return len(prs.slides)
-
-    if match_index + 1 < len(divider_positions):
-        return divider_positions[match_index + 1][0]
-
-    return len(prs.slides)
 
 
 def validate_template_bytes(template_bytes: bytes):
@@ -1315,48 +1228,6 @@ def canonicalize_section_label(label: str) -> str:
 
     return simplified
 
-
-
-def heading_tokens(s: str) -> set[str]:
-    return {tok for tok in simplify_heading_text(s).split() if tok}
-
-
-
-def score_section_match(docx_heading: str, template_title: str) -> tuple[int, str]:
-    """
-    Score similarity between DOCX heading and template section title.
-    Returns (score, match_type).
-    """
-    docx_simple = simplify_heading_text(docx_heading)
-    tmpl_simple = simplify_heading_text(template_title)
-
-    if not docx_simple or not tmpl_simple:
-        return 0, "none"
-
-    # Exact match after normalization
-    if docx_simple == tmpl_simple:
-        return 100, "exact"
-
-    docx_tokens = set(docx_simple.split())
-    tmpl_tokens = set(tmpl_simple.split())
-
-    # Same tokens but different order/format
-    if docx_tokens == tmpl_tokens:
-        return 96, "alias"
-
-    # Substring containment
-    if docx_simple in tmpl_simple or tmpl_simple in docx_simple:
-        return 90, "contains"
-
-    # Partial token overlap
-    overlap = docx_tokens & tmpl_tokens
-    if overlap:
-        score = 60 + min(20, 10 * len(overlap))
-        return score, "token-overlap"
-
-    return 0, "none"
-
-
 def read_docx_lines(docx_file) -> list[str]:
     doc = Document(docx_file)
     lines = []
@@ -1458,49 +1329,6 @@ def match_template_section_from_heading(heading: str, template_sections: list[di
         return best
 
     return None
-
-def section_id_from_heading(heading: str, template_sections: list[dict]) -> str | None:
-    match = match_template_section_from_heading(heading, template_sections)
-    return match["section_id"] if match else None
-
-
-
-def build_song_item_from_row(row, section_id=None):
-    lyrics_raw = str(row.get("Lyrics (Raw)", "")).strip()
-    slides = split_slides_manual(lyrics_raw)
-
-    return {
-        "umh_number": str(row.get("UMH Number", "")).strip(),
-        "title": str(row.get("Title", "")).strip(),
-        "slides": slides,
-        "lyrics_font_size_pt": None,
-        "line_spacing": None,
-        "override_lyrics_font_size": False,
-        "override_line_spacing": False,
-        "section_id": section_id,
-    }
-
-
-
-def should_treat_docx_line_as_anchor(line: str) -> bool:
-    stripped = str(line or "").strip()
-    if not stripped:
-        return False
-    if is_umh_song_line(stripped):
-        return False
-    if stripped.startswith("+") or stripped.startswith("#"):
-        return True
-
-    # Allow plain section titles from the DOCX to act as range anchors.
-    # This lets the importer map everything between major headings like
-    # Call to Worship -> Scripture Reading -> Corporate Prayer.
-    word_count = len(stripped.split())
-    has_sentence_punctuation = any(ch in stripped for ch in [":", ";", ".", "?", "!"])
-    if word_count <= 6 and not has_sentence_punctuation:
-        return True
-    return False
-
-
 
 def import_service_order_from_docx(docx_file, template_sections):
     """
@@ -1781,14 +1609,6 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         
         ppt = PPTXCreator(template_obj)
 
-        def get_live_index(prs, slide_obj):
-            target_slide_id = slide_obj.slide_id
-            for idx, s in enumerate(prs.slides):
-                if s.slide_id == target_slide_id:
-                    return idx
-            raise ValueError(f"Slide id {target_slide_id} not found in current deck")
-
-        # Track each block by actual slide objects, in original order
         # Track each block by slide_id, not start/end/count
         block_slide_ids = {
             i: [prs.slides[j].slide_id for j in range(rec["start_idx"], rec["end_idx"] + 1)]
