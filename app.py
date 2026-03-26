@@ -1734,23 +1734,45 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
         def move_block_with_interface(block_idx: int, target_idx: int):
             """
-            Move a contiguous block slide-by-slide using PPTXCreator.move_slide(),
-            preserving relative order within the block.
+            Move a contiguous block using PPTXCreator.move_slide(), preserving order.
+        
+            Rule:
+            - moving upward  -> move from back to front
+            - moving downward -> move from front to back
             """
             rec = current_positions[block_idx]
             start = rec["start"]
+            end = rec["end"]
             count = rec["count"]
-
-            # Re-read current start each iteration because moves change indices
-            for offset in range(count):
-                current_start = current_positions[block_idx]["start"]
-                current_slide_idx = current_start + offset
-                desired_idx = target_idx + offset
-
-                if current_slide_idx != desired_idx:
-                    slide_obj = ppt.prs.slides[current_slide_idx]
-                    ppt.move_slide(slide_obj, desired_idx)
-                    update_positions_after_single_move(current_slide_idx, desired_idx)
+        
+            if count <= 1:
+                if start != target_idx:
+                    slide_obj = ppt.prs.slides[start]
+                    ppt.move_slide(slide_obj, target_idx)
+                    update_positions_after_single_move(start, target_idx)
+                return
+        
+            # No-op if target is already inside the block region
+            if target_idx >= start and target_idx <= end + 1:
+                return
+        
+            # Moving block earlier in deck
+            if target_idx < start:
+                # move from back to front, always into target_idx
+                for _ in range(count):
+                    current_end = current_positions[block_idx]["end"]
+                    slide_obj = ppt.prs.slides[current_end]
+                    ppt.move_slide(slide_obj, target_idx)
+                    update_positions_after_single_move(current_end, target_idx)
+        
+            # Moving block later in deck
+            else:
+                # move from front to back, always to the slot just after the block's destination
+                for _ in range(count):
+                    current_start = current_positions[block_idx]["start"]
+                    slide_obj = ppt.prs.slides[current_start]
+                    ppt.move_slide(slide_obj, target_idx - 1)
+                    update_positions_after_single_move(current_start, target_idx - 1)
 
         # Reorder each block to its target section
         for i, block in enumerate(block_records):
