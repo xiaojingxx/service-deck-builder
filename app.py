@@ -1562,7 +1562,6 @@ def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_la
     end_idx = len(prs.slides) - 1
     return start_idx, end_idx
 
-
 def create_combined_ppt(setlist, template_bytes: bytes):
     """
     Rewritten to avoid direct _sldIdLst reordering inside create_combined_ppt().
@@ -1664,7 +1663,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
         prs.save(intermediate_path)
 
-        ppt = PPTXCreator(intermediate_path)
+        ppt = PPTXCreator(prs)
 
         # Track current live positions of appended blocks
         current_positions = {
