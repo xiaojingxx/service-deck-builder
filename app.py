@@ -1562,6 +1562,31 @@ def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_la
     end_idx = len(prs.slides) - 1
     return start_idx, end_idx
 
+class ExistingDeckTemplate:
+    def __init__(
+        self,
+        pptx_path: str,
+        title_layout_name=None,
+        default_layout_name=None,
+        divider_layout_name=None,
+    ):
+        self.template = pptx_path
+        self.prs = Presentation(pptx_path)
+
+        self.title_layout = self._get_layout(title_layout_name, fallback_index=0)
+        self.default_layout = self._get_layout(default_layout_name, fallback_index=1)
+        self.divider_layout = self._get_layout(divider_layout_name, fallback_index=0)
+
+    def _get_layout(self, layout_name, fallback_index=0):
+        if layout_name:
+            for layout in self.prs.slide_layouts:
+                try:
+                    if layout.name == layout_name:
+                        return layout
+                except Exception:
+                    pass
+        return self.prs.slide_layouts[fallback_index]
+
 def create_combined_ppt(setlist, template_bytes: bytes):
     """
     Rewritten to avoid direct _sldIdLst reordering inside create_combined_ppt().
@@ -1663,7 +1688,14 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
         prs.save(intermediate_path)
 
-        ppt = PPTXCreator(prs)
+        template_obj = ExistingDeckTemplate(
+            intermediate_path,
+            title_layout_name=FIRST_LAYOUT_NAME,
+            default_layout_name=REST_LAYOUT_NAME,
+            divider_layout_name=DIVIDER_LAYOUT_NAME,
+        )
+        
+        ppt = PPTXCreator(template_obj)
 
         # Track current live positions of appended blocks
         current_positions = {
