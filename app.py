@@ -1697,79 +1697,52 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         
         ppt = PPTXCreator(template_obj)
 
-        # Track current live positions of appended blocks
-        current_positions = {
-            i: list(range(rec["start_idx"], rec["end_idx"] + 1))
+        def get_live_index(prs, slide_obj):
+            target_slide_id = slide_obj.slide_id
+            for idx, s in enumerate(prs.slides):
+                if s.slide_id == target_slide_id:
+                    return idx
+            raise ValueError(f"Slide id {target_slide_id} not found in current deck")
+
+        # Track each block by actual slide objects, in original order
+        block_slide_refs = {
+            i: [ppt.prs.slides[j] for j in range(rec["start_idx"], rec["end_idx"] + 1)]
             for i, rec in enumerate(block_records)
         }
 
-        def update_positions_after_single_move(moved_from: int, moved_to: int):
-            """
-            Update every tracked live slide index after ONE slide move.
-            current_positions[block_idx] is a list of live indices for that block.
-            """
-            for block_idx, idx_list in current_positions.items():
-                new_list = []
-        
-                for idx in idx_list:
-                    if idx == moved_from:
-                        new_list.append(moved_to)
-                    elif moved_from < moved_to:
-                        # slide moved downward; slides in between shift left
-                        if moved_from < idx <= moved_to:
-                            new_list.append(idx - 1)
-                        else:
-                            new_list.append(idx)
-                    else:
-                        # slide moved upward; slides in between shift right
-                        if moved_to <= idx < moved_from:
-                            new_list.append(idx + 1)
-                        else:
-                            new_list.append(idx)
-        
-                current_positions[block_idx] = sorted(new_list)
-
         def move_block_with_interface(block_idx: int, target_idx: int):
             """
-            Move a contiguous block using PPTXCreator.move_slide(), preserving order.
-            Uses explicit live index tracking for every slide in the block.
+            Move a contiguous block while preserving original slide order.
+
+            Strategy:
+            - get the block's current live indices from slide_id
+            - if moving upward: insert at target_idx
+            - if moving downward: insert at target_idx - block_size
+            - always move slides in ORIGINAL ORDER
             """
-            live_indices = current_positions[block_idx]
-            count = len(live_indices)
-        
-            if count == 0:
+            slide_objs = block_slide_refs[block_idx]
+            if not slide_objs:
                 return
-        
+
+            live_indices = [get_live_index(ppt.prs, s) for s in slide_objs]
             block_start = min(live_indices)
             block_end = max(live_indices)
-        
-            # No-op if target is already inside the block
+            count = len(slide_objs)
+
+            # No-op if target is already inside / immediately after the block
             if block_start <= target_idx <= block_end + 1:
                 return
-        
-            # Moving earlier in the deck
-            if target_idx < block_start:
-                # move from back to front
-                for offset in range(count):
-                    current_live_indices = current_positions[block_idx]
-                    slide_to_move_idx = max(current_live_indices)
-                    insert_at = target_idx + offset
-        
-                    slide_obj = ppt.prs.slides[slide_to_move_idx]
-                    ppt.move_slide(slide_obj, insert_at)
-                    update_positions_after_single_move(slide_to_move_idx, insert_at)
-        
-            # Moving later in the deck
-            else:
-                # move from front to back
-                for offset in range(count):
-                    current_live_indices = current_positions[block_idx]
-                    slide_to_move_idx = min(current_live_indices)
-                    insert_at = target_idx - 1 + offset
-        
-                    slide_obj = ppt.prs.slides[slide_to_move_idx]
-                    ppt.move_slide(slide_obj, insert_at)
-                    update_positions_after_single_move(slide_to_move_idx, insert_at)
+
+            # If target is after the block, removing the block shifts target left
+            adjusted_target = target_idx if target_idx < block_start else target_idx - count
+
+            # Move each slide in ORIGINAL ORDER
+            for offset, slide_obj in enumerate(slide_objs):
+                desired_idx = adjusted_target + offset
+                current_idx = get_live_index(ppt.prs, slide_obj)
+
+                if current_idx != desired_idx:
+                    ppt.move_slide(slide_obj, desired_idx)
             
         # Reorder each block to its target section
         for i, block in enumerate(block_records):
