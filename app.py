@@ -579,68 +579,64 @@ def get_slide_obj_by_slide_id(slides, slide_id: int):
             return slide
     raise ValueError(f"Slide id {slide_id} not found")
 
-def get_live_index_by_slide_id(prs, slide_id: int) -> int:
-    for idx, slide in enumerate(prs.slides):
-        if slide.slide_id == slide_id:
-            return idx
-    raise ValueError(f"Slide id {slide_id} not found")
 
-
-def build_divider_anchor_map(prs):
+def build_section_anchor_map(prs):
     """
+    Build anchors from the real template-preserved deck BEFORE reordering.
+
     Returns:
-      ordered_dividers: list of (section_title, slide_id)
-      by_title: dict normalized_title -> slide_id
+        dict[normalized_section_title] = {
+            "divider_slide_id": int,
+            "next_divider_slide_id": int | None
+        }
     """
-    ordered_dividers = []
-    by_title = {}
+    divider_entries = []
 
     for slide in prs.slides:
         if is_divider_slide(slide):
-            title = get_divider_title(slide)
-            norm = canonicalize_section_label(title)
-            ordered_dividers.append((norm, slide.slide_id))
-            by_title[norm] = slide.slide_id
+            raw_title = get_divider_title(slide)
+            norm_title = canonicalize_section_label(raw_title)
+            divider_entries.append(
+                {
+                    "raw_title": raw_title,
+                    "norm_title": norm_title,
+                    "slide_id": slide.slide_id,
+                }
+            )
 
-    return ordered_dividers, by_title
+    anchor_map = {}
+    for i, entry in enumerate(divider_entries):
+        next_slide_id = None
+        if i + 1 < len(divider_entries):
+            next_slide_id = divider_entries[i + 1]["slide_id"]
+
+        anchor_map[entry["norm_title"]] = {
+            "divider_slide_id": entry["slide_id"],
+            "next_divider_slide_id": next_slide_id,
+            "raw_title": entry["raw_title"],
+        }
+
+    return anchor_map
 
 
-def find_section_insert_index_from_anchors(slides, section_title: str) -> int:
-    ordered_dividers = []
-    for slide in slides:
-        if is_divider_slide(slide):
-            title = get_divider_title(slide)
-            norm = canonicalize_section_label(title)
-            ordered_dividers.append((title, norm, slide.slide_id))
-
+def find_section_insert_index_from_anchor_map(slides, section_title: str, anchor_map: dict) -> int:
     target_norm = canonicalize_section_label(section_title)
+    anchor = anchor_map.get(target_norm)
 
-    # 1. exact canonical match
-    match_idx = None
-    for i, (_, norm, _) in enumerate(ordered_dividers):
-        if norm == target_norm:
-            match_idx = i
-            break
-
-    # 2. contains fallback
-    if match_idx is None:
-        for i, (_, norm, _) in enumerate(ordered_dividers):
-            if target_norm and (target_norm in norm or norm in target_norm):
-                match_idx = i
-                break
-
-    if match_idx is None:
-        available = [raw for raw, _, _ in ordered_dividers]
+    if anchor is None:
+        available = [v["raw_title"] for v in anchor_map.values()]
         raise ValueError(
             f"Could not find divider for section: {section_title!r}. "
             f"Available dividers: {available}"
         )
 
-    if match_idx + 1 < len(ordered_dividers):
-        next_divider_id = ordered_dividers[match_idx + 1][2]
-        return get_live_index_by_slide_id(slides, next_divider_id)
+    next_divider_slide_id = anchor["next_divider_slide_id"]
 
-    return len(slides)
+    # last section -> insert at end
+    if next_divider_slide_id is None:
+        return len(slides)
+
+    return get_live_index_by_slide_id(slides, next_divider_slide_id)
 
 # =========================================================
 # TEMPLATE / SECTION HELPERS
