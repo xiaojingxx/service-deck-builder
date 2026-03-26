@@ -1664,7 +1664,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
 
         prs.save(intermediate_path)
 
-        ppt = PPTXCreator(filename=intermediate_path)
+        ppt = PPTXCreator(intermediate_path)
 
         # Track current live positions of appended blocks
         current_positions = {
