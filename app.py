@@ -18,6 +18,7 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
+from pptx_interface import PPTXCreator
 from docx import Document
 
 
@@ -1563,6 +1564,17 @@ def add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_la
 
 
 def create_combined_ppt(setlist, template_bytes: bytes):
+    """
+    Rewritten to avoid direct _sldIdLst reordering inside create_combined_ppt().
+    Uses PPTXCreator.move_slide() for final slide moves.
+
+    Keeps your current behavior:
+    - songs mode => songs only
+    - preserve_template_slides=False => songs only
+    - preserve_template_slides=True => keep template, optionally hide section content,
+      then insert songs under each matching section
+    """
+    
     sync_block_model_from_setlist()
     service_order_blocks = st.session_state.get("service_order_blocks", []) or []
     song_store = st.session_state.get("song_store", {}) or {}
@@ -1576,6 +1588,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         raise ValueError("Template layouts not found.")
 
     output_mode = st.session_state.get("service_output_mode", "full")
+    preserve_template_slides = st.session_state.get("preserve_template_slides", True)
 
     ordered_song_pairs = []
     for block in service_order_blocks:
@@ -1585,7 +1598,10 @@ def create_combined_ppt(setlist, template_bytes: bytes):
                 if song:
                     ordered_song_pairs.append((item["song_id"], song))
 
-    if output_mode == "songs":
+    # ---------------------------------------------------------
+    # CASE 1: songs only
+    # ---------------------------------------------------------
+    if output_mode == "songs" or not preserve_template_slides:
         delete_all_slides(prs)
         for _, song in ordered_song_pairs:
             add_song_block_to_prs(prs, song, first_layout, rest_layout)
@@ -1595,19 +1611,13 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         output.seek(0)
         return output
 
-    if not st.session_state.get("preserve_template_slides", True):
-        delete_all_slides(prs)
-        for _, song in ordered_song_pairs:
-            add_song_block_to_prs(prs, song, first_layout, rest_layout)
-
-        output = BytesIO()
-        prs.save(output)
-        output.seek(0)
-        return output
-
+    # ---------------------------------------------------------
+    # CASE 2: full deck with template preserved
+    # ---------------------------------------------------------
     hidden_ids = set(st.session_state.get("hidden_section_ids", []))
     sections = st.session_state.get("template_sections", [])
 
+    # Delete hidden section content slides first
     slides_to_delete = []
     for sec in sections:
         if sec["id"] in hidden_ids:
@@ -1616,8 +1626,9 @@ def create_combined_ppt(setlist, template_bytes: bytes):
     for idx in sorted(set(slides_to_delete), reverse=True):
         delete_slide_by_index(prs, idx)
 
+    # Append all song blocks first, and record where each block starts/ends
+    block_records = []
     for block in service_order_blocks:
-        sec_title = block.get("section_title")
         section_song_pairs = []
         for item in block.get("items", []):
             if item.get("type") != "song":
@@ -1629,23 +1640,119 @@ def create_combined_ppt(setlist, template_bytes: bytes):
         if not section_song_pairs:
             continue
 
-        if block.get("section_id") is None:
-            add_section_song_block_to_prs(prs, section_song_pairs, first_layout, rest_layout)
-            continue
-
-        target_idx = find_section_insert_index(prs, sec_title)
         start_idx, end_idx = add_section_song_block_to_prs(
             prs,
             section_song_pairs,
             first_layout,
             rest_layout,
         )
-        move_slide_block(prs, start_idx, end_idx, target_idx)
 
-    output = BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output
+        block_records.append(
+            {
+                "section_id": block.get("section_id"),
+                "section_title": block.get("section_title"),
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "slide_count": end_idx - start_idx + 1,
+            }
+        )
+
+    # Save intermediate PPTX so PPTXCreator can work on it
+    with tempfile.TemporaryDirectory() as tmpdir:
+        intermediate_path = os.path.join(tmpdir, "combined_before_reorder.pptx")
+        final_path = os.path.join(tmpdir, "combined_after_reorder.pptx")
+
+        prs.save(intermediate_path)
+
+        ppt = PPTXCreator(filename=intermediate_path)
+
+        # Track current live positions of appended blocks
+        current_positions = {
+            i: {
+                "start": rec["start_idx"],
+                "end": rec["end_idx"],
+                "count": rec["slide_count"],
+            }
+            for i, rec in enumerate(block_records)
+        }
+
+        def update_positions_after_single_move(moved_from: int, moved_to: int):
+            """
+            Update tracked block start/end positions after ONE slide move.
+            """
+            for rec in current_positions.values():
+                # Update start
+                if rec["start"] == moved_from:
+                    rec["start"] = moved_to
+                elif moved_from < moved_to:
+                    if moved_from < rec["start"] <= moved_to:
+                        rec["start"] -= 1
+                else:
+                    if moved_to <= rec["start"] < moved_from:
+                        rec["start"] += 1
+
+                # Update end
+                if rec["end"] == moved_from:
+                    rec["end"] = moved_to
+                elif moved_from < moved_to:
+                    if moved_from < rec["end"] <= moved_to:
+                        rec["end"] -= 1
+                else:
+                    if moved_to <= rec["end"] < moved_from:
+                        rec["end"] += 1
+
+        def move_block_with_interface(block_idx: int, target_idx: int):
+            """
+            Move a contiguous block slide-by-slide using PPTXCreator.move_slide(),
+            preserving relative order within the block.
+            """
+            rec = current_positions[block_idx]
+            start = rec["start"]
+            count = rec["count"]
+
+            # Re-read current start each iteration because moves change indices
+            for offset in range(count):
+                current_start = current_positions[block_idx]["start"]
+                current_slide_idx = current_start + offset
+                desired_idx = target_idx + offset
+
+                if current_slide_idx != desired_idx:
+                    ppt.move_slide(current_slide_idx, desired_idx)
+                    update_positions_after_single_move(current_slide_idx, desired_idx)
+
+        # Reorder each block to its target section
+        for i, block in enumerate(block_records):
+            section_id = block["section_id"]
+            section_title = block["section_title"]
+
+            # Unassigned blocks just stay at the end
+            if section_id is None:
+                continue
+
+            target_idx = find_section_insert_index(prs, section_title)
+
+            # But find_section_insert_index() was computed on the python-pptx prs
+            # before PPTXCreator moves. So we must adjust target_idx based on
+            # blocks already moved ahead of this position.
+            #
+            # Easiest safe strategy:
+            # rebuild a temporary Presentation from the latest saved file each loop.
+            ppt.save(final_path)
+            latest_prs = Presentation(final_path)
+            target_idx = find_section_insert_index(latest_prs, section_title)
+
+            move_block_with_interface(i, target_idx)
+
+            # Save after each block move so next target lookup sees updated order
+            ppt.save(final_path)
+
+        # Final save
+        ppt.save(final_path)
+
+        with open(final_path, "rb") as f:
+            output = BytesIO(f.read())
+            output.seek(0)
+            return output
 
 
 def create_single_song_ppt(song_item, template_bytes: bytes):
