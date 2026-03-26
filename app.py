@@ -1761,17 +1761,7 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             if section_id is None:
                 continue
 
-            target_idx = find_section_insert_index(prs, section_title)
-
-            # But find_section_insert_index() was computed on the python-pptx prs
-            # before PPTXCreator moves. So we must adjust target_idx based on
-            # blocks already moved ahead of this position.
-            #
-            # Easiest safe strategy:
-            # rebuild a temporary Presentation from the latest saved file each loop.
-            ppt.save(final_path)
-            latest_prs = Presentation(final_path)
-            target_idx = find_section_insert_index(latest_prs, section_title)
+            target_idx = find_section_insert_index(ppt.prs, section_title)
 
             move_block_with_interface(i, target_idx)
 
