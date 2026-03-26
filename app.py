@@ -1239,14 +1239,17 @@ DOCX_SECTION_ALIASES = {
         "offering",
         "offering prayer",
     ],
-    "closing song": [
+    "response": [
+        "response",
         "closing song",
         "closing songs",
         "closing hymn",
         "closing hymns",
+        "hymn of response",
         "response song",
         "response hymn",
         "sending song",
+        "closing response",
     ],
     "benediction": ["benediction", "closing blessing"],
 }
