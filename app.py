@@ -18,7 +18,7 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 from PIL import Image
-from pptx_interface import PPTXCreator
+from pptx_tools.creator import PPTXCreator
 from docx import Document
 
 
