@@ -566,6 +566,19 @@ def move_slide_block(prs, start_idx: int, end_idx: int, target_idx: int):
     for offset, slide_id in enumerate(block):
         sldIdLst.insert(target_idx + offset, slide_id)
 
+def get_live_index_by_slide_id(prs, slide_id: int) -> int:
+    for idx, slide in enumerate(prs.slides):
+        if slide.slide_id == slide_id:
+            return idx
+    raise ValueError(f"Slide id {slide_id} not found")
+
+
+def get_slide_obj_by_slide_id(prs, slide_id: int):
+    for slide in prs.slides:
+        if slide.slide_id == slide_id:
+            return slide
+    raise ValueError(f"Slide id {slide_id} not found")
+
 
 # =========================================================
 # TEMPLATE / SECTION HELPERS
@@ -1705,59 +1718,48 @@ def create_combined_ppt(setlist, template_bytes: bytes):
             raise ValueError(f"Slide id {target_slide_id} not found in current deck")
 
         # Track each block by actual slide objects, in original order
-        block_slide_refs = {
-            i: [ppt.prs.slides[j] for j in range(rec["start_idx"], rec["end_idx"] + 1)]
+        block_slide_ids = {
+            i: [prs.slides[j].slide_id for j in range(rec["start_idx"], rec["end_idx"] + 1)]
             for i, rec in enumerate(block_records)
         }
 
         def move_block_with_interface(block_idx: int, target_idx: int):
-            """
-            Move a contiguous block while preserving original slide order.
-
-            Strategy:
-            - get the block's current live indices from slide_id
-            - if moving upward: insert at target_idx
-            - if moving downward: insert at target_idx - block_size
-            - always move slides in ORIGINAL ORDER
-            """
-            slide_objs = block_slide_refs[block_idx]
-            if not slide_objs:
+            slide_ids = block_slide_ids[block_idx]
+            if not slide_ids:
                 return
-
-            live_indices = [get_live_index(ppt.prs, s) for s in slide_objs]
+        
+            live_indices = [get_live_index_by_slide_id(ppt.prs, sid) for sid in slide_ids]
             block_start = min(live_indices)
             block_end = max(live_indices)
-            count = len(slide_objs)
-
-            # No-op if target is already inside / immediately after the block
+            count = len(slide_ids)
+        
+            # no-op if already there
             if block_start <= target_idx <= block_end + 1:
                 return
-
-            # If target is after the block, removing the block shifts target left
+        
+            # when moving a block downward, removing it first shifts target left
             adjusted_target = target_idx if target_idx < block_start else target_idx - count
-
-            # Move each slide in ORIGINAL ORDER
-            for offset, slide_obj in enumerate(slide_objs):
+        
+            # move slides in original order
+            for offset, sid in enumerate(slide_ids):
                 desired_idx = adjusted_target + offset
-                current_idx = get_live_index(ppt.prs, slide_obj)
-
+                slide_obj = get_slide_obj_by_slide_id(ppt.prs, sid)
+                current_idx = get_live_index_by_slide_id(ppt.prs, sid)
+        
                 if current_idx != desired_idx:
                     ppt.move_slide(slide_obj, desired_idx)
             
         # Reorder each block to its target section
-        for i, block in enumerate(block_records):
+        for i in range(len(block_records) - 1, -1, -1):
+            block = block_records[i]
             section_id = block["section_id"]
             section_title = block["section_title"]
-
-            # Unassigned blocks just stay at the end
+        
             if section_id is None:
                 continue
-
+        
             target_idx = find_section_insert_index(ppt.prs, section_title)
-
             move_block_with_interface(i, target_idx)
-
-            # Save after each block move so next target lookup sees updated order
             ppt.save(final_path)
 
         # Final save
