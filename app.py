@@ -2594,7 +2594,7 @@ with main_left:
             st.slider(
                 "Smart split max characters per line",
                 min_value=20,
-                max_value=45,
+                max_value=50,
                 key="smart_split_max_chars",
             )
             st.slider(
