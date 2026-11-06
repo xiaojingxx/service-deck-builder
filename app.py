@@ -56,6 +56,19 @@ METADATA_PART_LABELS = {"title"}
 # STREAMLIT PAGE
 # =========================================================
 st.set_page_config(page_title="Service Deck Builder", layout="wide")
+# Keep the page from stretching across very wide screens
+st.markdown(
+    """
+    <style>
+    [data-testid="stMainBlockContainer"], .block-container {
+        max-width: 1180px;
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Service Deck Builder")
 
 
