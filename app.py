@@ -45,9 +45,10 @@ PART_NAV_PLACEHOLDER_NAME = "PART_NAV"
 PART_NAV_SEPARATOR = " | "
 PART_FOOTER_FONT_SIZE_PT = 14  # only used for the text-box fallback
 
-# Lyrics lines like "#Verse 1#" or "#Chorus#" start a new song part (and a new slide).
-PART_MARKER_RE = re.compile(r"^\s*#\s*([^#]*?)\s*#\s*$")
-# A bare "##" line ends the current part (following lines are unlabelled).
+# Lyrics lines like "[Verse 1]" / "[Chorus]" (or "#Verse 1#" / "#Chorus#") start a new
+# song part (and a new slide). The marker must be the whole line.
+PART_MARKER_RE = re.compile(r"^\s*(?:#\s*([^#]*?)\s*#|\[\s*([^\[\]]*?)\s*\])\s*$")
+# A bare "[]" (or "##") line ends the current part (following lines are unlabelled).
 # Parts whose content is metadata, not lyrics, so they never become slides.
 METADATA_PART_LABELS = {"title"}
 
@@ -268,18 +269,19 @@ def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list
     return slides
 
 def parse_part_marker(line):
-    """Return the label for a '#Label#' line ('' for '##'), or None if not a marker."""
+    """Return the label for a '[Label]' / '#Label#' line ('' for '[]' / '##'), or None."""
     m = PART_MARKER_RE.match(str(line or ""))
     if not m:
         return None
-    return m.group(1).strip()
+    label = m.group(1) if m.group(1) is not None else m.group(2)
+    return label.strip()
 
 
 def split_text_into_parts(text: str) -> list[dict]:
     """
     Split lyrics on '#Label#' marker lines.
     Returns [{"label": str | None, "text": str}, ...] in order, skipping
-    metadata parts (e.g. #Title#) and parts with no lyrics.
+    metadata parts (e.g. [Title]) and parts with no lyrics.
     """
     raw_parts = []
     current = {"label": None, "lines": []}
@@ -361,9 +363,9 @@ def song_slides_to_editor_text(slides, slide_parts=None) -> str:
         body = "\n".join(slide_lines)
         label = part.get("label")
         if part.get("new_part") and label:
-            body = f"#{label}#\n{body}"
+            body = f"[{label}]\n{body}"
         elif part.get("new_part") and prev_label:
-            body = f"##\n{body}"  # "##" ends the previous labelled part
+            body = f"[]\n{body}"  # "[]" ends the previous labelled part
         prev_label = label
         chunks.append(body)
     return "\n\n".join(chunks)
@@ -644,9 +646,9 @@ def expand_refrain_blocks(text: str) -> str:
             if block:
                 refrain_lines = block
                 # label it as a song part, so it gets a footer
-                output.append(f"#{refrain_label}#")
+                output.append(f"[{refrain_label}]")
                 output.extend(block)
-                output.append("##")  # end the refrain part; following lines are unlabelled
+                output.append("[]")  # end the refrain part; following lines are unlabelled
 
             # preserve spacing
             if i < len(lines) and is_blank(lines[i]):
@@ -657,9 +659,9 @@ def expand_refrain_blocks(text: str) -> str:
         # Replace "(Refrain)" later
         if any(p.match(line) for p in refrain_ref_patterns):
             if refrain_lines:
-                output.append(f"#{refrain_label}#")
+                output.append(f"[{refrain_label}]")
                 output.extend(refrain_lines)
-                output.append("##")
+                output.append("[]")
             else:
                 output.append(line)
             i += 1
@@ -1784,7 +1786,7 @@ def import_service_order_from_docx(docx_file, template_sections):
         if block is not None:
             block["items"].append({"type": "song", "song_id": song_id})
 
-    awaiting_title = False  # set after a "#Title#" line; the next line is the song title
+    awaiting_title = False  # set after a "[Title]" / "#Title#" line; the next line is the song title
 
     for raw_line in lines:
         stripped = raw_line.strip()
@@ -1795,7 +1797,7 @@ def import_service_order_from_docx(docx_file, template_sections):
                 pending_song["lines"].append("")  # blank paragraph = slide break
             continue
 
-        # "#Title#" starts a new song (same format as the song editor);
+        # "[Title]" (or "#Title#") starts a new song (same format as the song editor);
         # the next line is its title and the lines after it are its lyrics
         marker_label = parse_part_marker(stripped)
         if marker_label is not None and marker_label.lower() in METADATA_PART_LABELS:
@@ -1817,7 +1819,7 @@ def import_service_order_from_docx(docx_file, template_sections):
             }
             continue
 
-        # "#Verse 1#" part markers inside lyrics are lyrics, not "#" headings
+        # "[Verse 1]" / "#Verse 1#" part markers inside lyrics are lyrics, not "#" headings
         if collecting and parse_part_marker(stripped) is not None:
             pending_song["lines"].append(stripped)
             continue
@@ -2412,7 +2414,7 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
     for idx, raw_line in enumerate(lines):
         stripped = raw_line.strip()
 
-        # "#Verse 1#" lines start a new slide and aren't lyrics themselves
+        # "[Verse 1]" / "#Verse 1#" lines start a new slide and aren't lyrics themselves
         marker_label = parse_part_marker(raw_line)
         if marker_label is not None:
             if in_slide:
@@ -3009,7 +3011,7 @@ with st.sidebar:
                 st.success(f"Imported {import_report['song_count']} song(s) into the template-driven service order.")
             else:
                 st.warning(
-                    "No songs were imported. Start each song with a \"#Title#\" line followed by "
+                    "No songs were imported. Start each song with a \"[Title]\" line followed by "
                     "the title and lyrics, or a line starting with \"UMH\", e.g. "
                     "\"UMH 140 Great Is Thy Faithfulness\" (lyrics from Google Sheets) or "
                     "\"UMH Great Is Thy Faithfulness\" followed by the lyrics in the DOCX."
@@ -3133,7 +3135,7 @@ with main_left:
     if detected_part_labels:
         st.caption("Song parts (footer links): " + PART_NAV_SEPARATOR.join(detected_part_labels))
     else:
-        st.caption("No song parts detected. Add lines like #Verse 1# or #Chorus# to label slides.")
+        st.caption("No song parts detected. Add lines like [Verse 1] or [Chorus] to label slides.")
 
     if refresh_song_preview_clicked:
         if selected_template_bytes is None:
