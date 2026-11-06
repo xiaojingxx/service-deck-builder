@@ -328,7 +328,7 @@ def normalize_slide_parts(slides, slide_parts):
     return slide_parts
 
 
-def get_current_slides_and_parts(text: str, smart_split=None):
+def get_current_slides_and_parts(text: str, smart_split=None, max_chars=None, max_lines=None):
     """
     Returns (slides, slide_parts):
       slides:      list[list[str]]
@@ -349,8 +349,8 @@ def get_current_slides_and_parts(text: str, smart_split=None):
         if smart_split:
             part_slides = split_slides_balanced(
                 part["text"],
-                max_chars=st.session_state.get("smart_split_max_chars", 30),
-                max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
+                max_chars=max_chars or st.session_state.get("smart_split_max_chars", 30),
+                max_lines_per_slide=max_lines or st.session_state.get("smart_split_max_lines_per_slide", 4),
             )
         else:
             part_slides = split_slides_manual(part["text"])
@@ -1225,6 +1225,7 @@ def flatten_blocks_to_setlist(service_order_blocks, song_store):
                 "title": song.get("title", ""),
                 "slides": song.get("slides", []),
                 "slide_parts": song.get("slide_parts"),
+                "lyrics_text": song.get("lyrics_text"),
                 "lyrics_font_size_pt": song.get("lyrics_font_size_pt"),
                 "line_spacing": song.get("line_spacing"),
                 "override_lyrics_font_size": song.get("override_lyrics_font_size", False),
@@ -1802,6 +1803,7 @@ def import_service_order_from_docx(docx_file, template_sections):
             "title": title,
             "slides": imported_slides,
             "slide_parts": imported_slide_parts,
+            "lyrics_text": lyrics,
             "lyrics_font_size_pt": None,
             "line_spacing": None,
             "override_lyrics_font_size": False,
@@ -2666,9 +2668,18 @@ def section_selectbox(label, current_id, key):
     return st.selectbox(label, ids, index=ids.index(current_id), format_func=names.get, key=key)
 
 
+SMART_SPLIT_DEFAULT_CHARS = 30
+SMART_SPLIT_DEFAULT_LINES = 4
+
+
 def make_song_item(umh, title, lyrics_text, section_id, smart_split=False,
-                   font_size=None, line_spacing=None, song_id=None):
-    slides, slide_parts = get_current_slides_and_parts(lyrics_text, smart_split=smart_split)
+                   font_size=None, line_spacing=None, song_id=None,
+                   split_chars=None, split_lines=None):
+    split_chars = int(split_chars or SMART_SPLIT_DEFAULT_CHARS)
+    split_lines = int(split_lines or SMART_SPLIT_DEFAULT_LINES)
+    slides, slide_parts = get_current_slides_and_parts(
+        lyrics_text, smart_split=smart_split, max_chars=split_chars, max_lines=split_lines
+    )
     return {
         "song_id": song_id or f"s_{uuid.uuid4().hex[:10]}",
         "umh_number": str(umh or "").strip(),
@@ -2681,7 +2692,30 @@ def make_song_item(umh, title, lyrics_text, section_id, smart_split=False,
         "override_line_spacing": line_spacing is not None,
         "section_id": section_id,
         "smart_split": bool(smart_split),
+        "split_chars": split_chars,
+        "split_lines": split_lines,
+        # the lyrics as typed, so changing this song's split settings re-splits from scratch
+        "lyrics_text": lyrics_text,
     }
+
+
+def smart_split_controls(key_prefix, enabled, chars, lines):
+    """This song's own automatic-split switch and settings. Returns (enabled, chars, lines)."""
+    enabled = st.checkbox(
+        "Split long lines and slides automatically",
+        value=bool(enabled),
+        key=f"{key_prefix}_smart",
+        help="Breaks long lines in two and limits how many lines go on each slide, for this song only.",
+    )
+    if enabled:
+        c1, c2 = st.columns(2)
+        with c1:
+            chars = st.slider("Max characters per line", 20, 50,
+                              value=int(chars or SMART_SPLIT_DEFAULT_CHARS), key=f"{key_prefix}_chars")
+        with c2:
+            lines = st.slider("Max lines per slide", 2, 6,
+                              value=int(lines or SMART_SPLIT_DEFAULT_LINES), key=f"{key_prefix}_lines")
+    return enabled, chars, lines
 
 
 def add_song(item):
@@ -2963,16 +2997,14 @@ def edit_song_dialog(song_id):
 
     lyrics = st.text_area(
         "Lyrics",
-        value=song_slides_to_editor_text(song.get("slides", []), song.get("slide_parts")),
+        value=song.get("lyrics_text") or song_slides_to_editor_text(song.get("slides", []), song.get("slide_parts")),
         height=340,
         key=f"d_lyr_{v}",
     )
     st.caption("A blank line starts a new slide. [Verse 1], [Chorus] … start a new part.")
 
-    smart = st.checkbox(
-        "Split long lines and slides automatically",
-        value=bool(song.get("smart_split")),
-        key=f"d_smart_{v}",
+    smart, split_chars, split_lines = smart_split_controls(
+        f"d_{v}", song.get("smart_split"), song.get("split_chars"), song.get("split_lines")
     )
 
     with st.expander("Text size and line spacing"):
@@ -2986,6 +3018,7 @@ def edit_song_dialog(song_id):
     item = make_song_item(
         umh, title, lyrics, section_id, smart,
         fs if fo else None, sp if so else None, song_id=song_id,
+        split_chars=split_chars, split_lines=split_lines,
     )
 
     nav_labels, _ = build_part_nav(item["slide_parts"])
@@ -3181,9 +3214,6 @@ def render_template_step():
             max_value=12,
             step=1,
         )
-        st.caption("Smart split (used by \"Split long lines and slides automatically\")")
-        persistent_widget(st.slider, "Max characters per line", "smart_split_max_chars", min_value=20, max_value=50)
-        persistent_widget(st.slider, "Max lines per slide", "smart_split_max_lines_per_slide", min_value=2, max_value=6)
         stats = get_runtime_resource_stats()
         st.caption(
             f"Server memory: app {format_bytes(stats['process_rss'])} · "
@@ -3340,9 +3370,18 @@ def render_library_tab():
             st.rerun()
 
 
+def paste_tab_item(title, lyrics):
+    ss = st.session_state
+    return make_song_item(
+        ss.get("new_umh", ""), title, lyrics, ss.get("new_sec"),
+        smart_split=ss.get("new_smart", False),
+        split_chars=ss.get("new_chars"), split_lines=ss.get("new_lines"),
+    )
+
+
 def add_pasted_song():
     ss = st.session_state
-    item = make_song_item(ss.get("new_umh", ""), ss.get("new_title", ""), ss.get("new_lyrics", ""), ss.get("new_sec"))
+    item = paste_tab_item(ss.get("new_title", ""), ss.get("new_lyrics", ""))
     if not item["title"] or not item["slides"]:
         return
     add_song(item)
@@ -3366,9 +3405,10 @@ def render_paste_tab(template_bytes):
         placeholder="[Verse 1]\nFirst line\nSecond line\n\n[Chorus]\nChorus line",
     )
     st.caption("Paste from anywhere. A blank line starts a new slide; [Verse 1], [Chorus] start a new part.")
+    smart_split_controls("new", st.session_state.get("new_smart", False), None, None)
 
     if lyrics.strip():
-        draft = make_song_item(st.session_state.get("new_umh", ""), title, lyrics, st.session_state.get("new_sec"))
+        draft = paste_tab_item(title, lyrics)
         nav_labels, _ = build_part_nav(draft["slide_parts"])
         st.caption(
             f"{len(draft['slides'])} slides"
@@ -3394,7 +3434,7 @@ def render_paste_tab(template_bytes):
     )
     if preview:
         render_song_preview(
-            make_song_item(st.session_state.get("new_umh", ""), title, lyrics, st.session_state.get("new_sec")),
+            paste_tab_item(title, lyrics),
             template_bytes,
         )
 
