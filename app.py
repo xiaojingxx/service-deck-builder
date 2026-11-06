@@ -328,7 +328,7 @@ def normalize_slide_parts(slides, slide_parts):
     return slide_parts
 
 
-def get_current_slides_and_parts(text: str, smart_split=None, max_chars=None, max_lines=None):
+def get_current_slides_and_parts(text: str, smart_split=None, max_chars=None, max_lines=None, order=None):
     """
     Returns (slides, slide_parts):
       slides:      list[list[str]]
@@ -345,7 +345,16 @@ def get_current_slides_and_parts(text: str, smart_split=None, max_chars=None, ma
     slides = []
     slide_parts = []
 
-    for part in split_text_into_parts(processed_text):
+    parts = split_text_into_parts(processed_text)
+    if order:
+        # Arrange the parts in the order they're sung; repeats allowed, unlisted parts left out.
+        by_key = {}
+        for part in parts:
+            if part["label"]:
+                by_key.setdefault(part["label"].strip().lower(), part)
+        parts = [by_key[k] for k in (str(o).strip().lower() for o in order) if k in by_key]
+
+    for part in parts:
         if smart_split:
             part_slides = split_slides_balanced(
                 part["text"],
@@ -2675,11 +2684,12 @@ SMART_SPLIT_DEFAULT_LINES = 4
 
 def make_song_item(umh, title, lyrics_text, section_id, smart_split=False,
                    font_size=None, line_spacing=None, song_id=None,
-                   split_chars=None, split_lines=None):
+                   split_chars=None, split_lines=None, order=None, order_text=""):
     split_chars = int(split_chars or SMART_SPLIT_DEFAULT_CHARS)
     split_lines = int(split_lines or SMART_SPLIT_DEFAULT_LINES)
     slides, slide_parts = get_current_slides_and_parts(
-        lyrics_text, smart_split=smart_split, max_chars=split_chars, max_lines=split_lines
+        lyrics_text, smart_split=smart_split, max_chars=split_chars, max_lines=split_lines,
+        order=order or None,
     )
     return {
         "song_id": song_id or f"s_{uuid.uuid4().hex[:10]}",
@@ -2697,7 +2707,126 @@ def make_song_item(umh, title, lyrics_text, section_id, smart_split=False,
         "split_lines": split_lines,
         # the lyrics as typed, so changing this song's split settings re-splits from scratch
         "lyrics_text": lyrics_text,
+        # the order the parts are sung in (None = as written)
+        "order": list(order) if order else None,
+        "order_text": order_text or "",
     }
+
+
+# =========================================================
+# ORDER OF PARTS
+# =========================================================
+def part_code(label):
+    """Short form of a part name: Verse 1 -> V1, Chorus -> C, Pre-Chorus -> PC, Bridge 2 -> B2."""
+    pieces = re.findall(r"[A-Za-z]+|\d+", str(label or ""))
+    return "".join(p[0].upper() if p.isalpha() else p for p in pieces)
+
+
+def song_part_labels(lyrics_text):
+    """Each part name once, in the order first written."""
+    labels, seen = [], set()
+    for part in split_text_into_parts(expand_refrain_blocks(lyrics_text or "")):
+        label = part["label"]
+        if label and label.strip().lower() not in seen:
+            seen.add(label.strip().lower())
+            labels.append(label)
+    return labels
+
+
+def parse_order_text(text, labels):
+    """
+    "V1 C V2 C B C", "Verse 1, Chorus, Verse 2" or a mix -> (list of part names, unknown entries).
+    """
+    lookup = {}
+    for label in labels:
+        lookup.setdefault(label.strip().lower(), label)
+        lookup.setdefault(part_code(label).lower(), label)
+
+    order, unknown = [], []
+    for chunk in re.split(r"\s*(?:,|;|→|->|>|\|)\s*", str(text or "").strip()):
+        if not chunk:
+            continue
+        if chunk.lower() in lookup:
+            order.append(lookup[chunk.lower()])
+            continue
+        tokens = chunk.split()
+        if len(tokens) > 1 and any(t.lower() in lookup for t in tokens):
+            for t in tokens:  # short forms separated by spaces, e.g. "V1 C V2 C"
+                if t.lower() in lookup:
+                    order.append(lookup[t.lower()])
+                else:
+                    unknown.append(t)
+        else:
+            unknown.append(chunk)
+    return order, unknown
+
+
+def order_controls(key_prefix, lyrics_text, saved_order_text=""):
+    """
+    This song's 'Arrangement' box with a quick-add button per part.
+    Returns (order list or None, order text).
+    """
+    ss = st.session_state
+    labels = song_part_labels(lyrics_text)
+    text_key = f"{key_prefix}_order"
+    if text_key not in ss:
+        ss[text_key] = saved_order_text or ""
+    st.markdown("**Arrangement**")
+    if not labels:
+        st.caption(
+            "Add part labels like [Verse 1] and [Chorus] to the lyrics above, "
+            "then set the order they're sung in here."
+        )
+        return None, ss.get(text_key, "")
+
+    st.caption(
+        "Leave empty to show the parts as written. Repeats are fine, e.g. V1 C V2 C B C. "
+        "Parts you leave out aren't shown."
+    )
+
+    def _append(code):
+        current = ss.get(text_key, "").strip()
+        ss[text_key] = f"{current}, {code}" if current else code
+
+    def _undo():
+        order, _ = parse_order_text(ss.get(text_key, ""), labels)
+        ss[text_key] = ", ".join(part_code(l) for l in order[:-1])
+
+    def _clear():
+        ss[text_key] = ""
+
+    per_row = 6
+    # "\\+" so Streamlit's markdown doesn't turn "+ V1" into a bullet point
+    buttons = [(f"\\+ {part_code(l)}", l) for l in labels]
+    for start in range(0, len(buttons), per_row):
+        cols = st.columns(per_row)
+        for col, (btn_label, full) in zip(cols, buttons[start:start + per_row]):
+            col.button(btn_label, key=f"{key_prefix}_add_{part_code(full)}", help=f"Add {full}",
+                       on_click=_append, args=(part_code(full),), use_container_width=True)
+
+    c1, c2, c3 = st.columns([4, 1, 1], vertical_alignment="bottom")
+    with c1:
+        text = st.text_input(
+            "Arrangement",
+            key=text_key,
+            placeholder=" ".join(part_code(l) for l in labels) + "  (as written)",
+            label_visibility="collapsed",
+        )
+    c2.button("Undo", key=f"{key_prefix}_undo", on_click=_undo, use_container_width=True)
+    c3.button("Clear", key=f"{key_prefix}_clear", on_click=_clear, use_container_width=True)
+
+    order, unknown = parse_order_text(text, labels)
+    if unknown:
+        st.warning(
+            "Not a part of this song: " + ", ".join(unknown)
+            + ". Parts: " + ", ".join(f"{l} ({part_code(l)})" for l in labels)
+        )
+    if order:
+        st.caption("Sung as: " + " → ".join(order))
+        left_out = [l for l in labels if l not in order]
+        if left_out:
+            st.caption("Left out: " + ", ".join(left_out))
+    return (order or None), text
 
 
 def smart_split_controls(key_prefix, enabled, chars, lines):
@@ -3007,6 +3136,7 @@ def edit_song_dialog(song_id):
     smart, split_chars, split_lines = smart_split_controls(
         f"d_{v}", song.get("smart_split"), song.get("split_chars"), song.get("split_lines")
     )
+    order, order_text = order_controls(f"d_{v}", lyrics, song.get("order_text", ""))
 
     with st.expander("Text size and line spacing"):
         fo = st.checkbox("Set lyrics size", value=song.get("lyrics_font_size_pt") is not None, key=f"d_fo_{v}")
@@ -3020,6 +3150,7 @@ def edit_song_dialog(song_id):
         umh, title, lyrics, section_id, smart,
         fs if fo else None, sp if so else None, song_id=song_id,
         split_chars=split_chars, split_lines=split_lines,
+        order=order, order_text=order_text,
     )
 
     nav_labels, _ = build_part_nav(item["slide_parts"])
@@ -3379,10 +3510,12 @@ def render_library_tab():
 
 def paste_tab_item(title, lyrics):
     ss = st.session_state
+    order, _ = parse_order_text(ss.get("new_order", ""), song_part_labels(lyrics))
     return make_song_item(
         ss.get("new_umh", ""), title, lyrics, ss.get("new_sec"),
         smart_split=ss.get("new_smart", False),
         split_chars=ss.get("new_chars"), split_lines=ss.get("new_lines"),
+        order=order or None, order_text=ss.get("new_order", ""),
     )
 
 
@@ -3396,6 +3529,7 @@ def add_pasted_song():
     ss["new_umh"] = ""
     ss["new_title"] = ""
     ss["new_lyrics"] = ""
+    ss["new_order"] = ""
 
 
 def render_paste_tab(template_bytes):
@@ -3413,6 +3547,7 @@ def render_paste_tab(template_bytes):
     )
     st.caption("Paste from anywhere. A blank line starts a new slide; [Verse 1], [Chorus] start a new part.")
     smart_split_controls("new", st.session_state.get("new_smart", False), None, None)
+    order_controls("new", lyrics)
 
     if lyrics.strip():
         draft = paste_tab_item(title, lyrics)
@@ -3455,9 +3590,13 @@ def render_song_row(song):
             st.markdown(f"**{song.get('title', '')}**")
             source = f"UMH {song['umh_number']} · " if song.get("umh_number") else ""
             nav_labels, _ = build_part_nav(normalize_slide_parts(song.get("slides", []), song.get("slide_parts")))
+            if song.get("order"):
+                parts_text = "Arrangement: " + " ".join(part_code(l) for l in song["order"])
+            else:
+                parts_text = PART_NAV_SEPARATOR.join(nav_labels)
             st.caption(
                 f"{source}{len(song.get('slides', []))} slides"
-                + (f" · {PART_NAV_SEPARATOR.join(nav_labels)}" if nav_labels else "")
+                + (f" · {parts_text}" if parts_text else "")
             )
             if warnings:
                 st.markdown(
