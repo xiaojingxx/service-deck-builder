@@ -2770,64 +2770,173 @@ CHORD_TOKEN_RE = re.compile(
     r"(?:sus\d*|add\d*|maj\d*|°|ø|\+|b\d+|#\d+)*(?:/[A-G](?:#|b)?)?\)?"
     r"|\d+|/[A-G](?:#|b)?|[|:x/]+)$"
 )
+# Performance notes that sit on chord lines: "(2.)", "(To Ch.)", "x2", "N.C."
+CHORD_NOTE_RE = re.compile(r"^(?:\(.*|.*\)|x\d+|\d+x|N\.?C\.?|-)$", re.IGNORECASE)
 CHORD_SECTION_RE = re.compile(
     r"^(VERSE|CHORUS|PRE-?CHORUS|BRIDGE|TAG|ENDING|OUTRO|INTRO|INTERLUDE|REFRAIN|"
-    r"INSTRUMENTAL|CODA|VAMP|MISC)\b\s*(\d*)\s*$",
+    r"INSTRUMENTAL|CODA|VAMP|MISC)\s*(\d*)\s*(?:\(.*\))?\s*:?\s*$",
     re.IGNORECASE,
 )
 CHORD_NO_LYRIC_SECTIONS = {"intro", "interlude", "instrumental"}
 CHORD_FOOTER_RE = re.compile(r"(CCLI|©|SongSelect|All rights reserved|www\.)", re.IGNORECASE)
+# Long parts are split evenly into slides of at most this many lines
+CHORD_SHEET_LINES_PER_SLIDE = 4
 
 
 def is_chord_line(line: str) -> bool:
-    tokens = line.split()
+    tokens = line.replace("|", " | ").split()
+    tokens = [t for t in tokens if not CHORD_NOTE_RE.match(t)]
     if not tokens:
-        return False
+        return True  # only notes like "(2.)"
     return sum(bool(CHORD_TOKEN_RE.match(t)) for t in tokens) / len(tokens) >= 0.8
+
+
+def _page_lines_by_column(page):
+    """
+    Return the page's text lines in reading order: the left column top to bottom,
+    then the right column. Works from word positions, so two-column chord sheets
+    aren't read straight across. The copyright footer is dropped.
+    """
+    words = page.get_text("words")  # x0, y0, x1, y1, text, block, line, word
+    if not words:
+        return []
+
+    # group words into visual rows by vertical position
+    rows = []
+    for w in sorted(words, key=lambda w: (round(w[3]), w[0])):
+        if rows and abs(rows[-1]["y"] - w[3]) <= 2.5:
+            rows[-1]["words"].append(w)
+        else:
+            rows.append({"y": w[3], "words": [w]})
+
+    def row_text(ws):
+        return " ".join(w[4] for w in sorted(ws, key=lambda w: w[0]))
+
+    # footer: everything from the first copyright/CCLI row down
+    footer_y = None
+    for r in rows:
+        if CHORD_FOOTER_RE.search(row_text(r["words"])):
+            footer_y = r["y"]
+            break
+
+    # a section heading that starts well right of the left margin means two columns
+    width = page.rect.width
+    split_x = None
+    for r in rows:
+        ws = sorted(r["words"], key=lambda w: w[0])
+        for i, w in enumerate(ws):
+            if w[0] < width * 0.35:
+                continue
+            # heading = this word plus any following words on the row, up to a gap
+            candidate = " ".join(x[4] for x in ws[i:i + 4])
+            if CHORD_SECTION_RE.match(candidate) or CHORD_SECTION_RE.match(w[4]):
+                gap_ok = i == 0 or w[0] - ws[i - 1][2] > width * 0.04
+                if gap_ok:
+                    split_x = w[0] - 6 if split_x is None else min(split_x, w[0] - 6)
+                break
+
+    columns = [[], []] if split_x is not None else [[]]
+    for r in rows:
+        if footer_y is not None and r["y"] >= footer_y - 1:
+            continue
+        if split_x is None:
+            columns[0].append(row_text(r["words"]))
+            continue
+        left = [w for w in r["words"] if w[0] < split_x]
+        right = [w for w in r["words"] if w[0] >= split_x]
+        if left:
+            columns[0].append(row_text(left))
+        if right:
+            columns[1].append(row_text(right))
+    return [line for col in columns for line in col]
+
+
+def _largest_text(page):
+    """The song title: the text in the largest font on the page (top-most if tied)."""
+    spans = [
+        sp
+        for block in page.get_text("dict").get("blocks", [])
+        for line in block.get("lines", [])
+        for sp in line.get("spans", [])
+        if sp.get("text", "").strip()
+    ]
+    if not spans:
+        return ""
+    biggest = max(sp["size"] for sp in spans)
+    top = sorted((sp for sp in spans if sp["size"] >= biggest - 0.5), key=lambda sp: (sp["bbox"][1], sp["bbox"][0]))
+    first_y = top[0]["bbox"][1]
+    return " ".join(sp["text"].strip() for sp in top if abs(sp["bbox"][1] - first_y) < biggest * 0.6)
+
+
+def _chunk_part(lines, limit):
+    """Split a part's lines into evenly sized slides of at most `limit` lines."""
+    if len(lines) <= limit:
+        return [lines]
+    n_slides = -(-len(lines) // limit)  # ceiling
+    base, extra = divmod(len(lines), n_slides)
+    chunks, i = [], 0
+    for k in range(n_slides):
+        size = base + (1 if k < extra else 0)
+        chunks.append(lines[i:i + size])
+        i += size
+    return chunks
 
 
 def parse_chord_sheet_pdf(pdf_bytes: bytes):
     """
-    Read a chord sheet laid out with chords above the lyrics (e.g. SongSelect).
-    Returns (title, lyrics_text) where lyrics_text uses [Verse 1] / [Chorus] markers.
+    Read a chord sheet laid out with chords above the lyrics (e.g. SongSelect),
+    in one or two columns. Returns (title, lyrics_text) using [Verse 1] / [Chorus] markers.
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
-        text = "\n".join(page.get_text("text", sort=True) for page in doc)
+        title = ""
+        lines = []
+        for page_no, page in enumerate(doc):
+            page_lines = _page_lines_by_column(page)
+            if page_no == 0:
+                title = _largest_text(page)
+            lines.extend(page_lines)
     finally:
         doc.close()
 
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         raise ValueError("No text found. Is this a scanned image rather than a text PDF?")
 
-    title = lines[0]
-    out = []
+    parts = []          # [(label, [lyric lines])]
+    current = None
     skipping = False
-    started = False
-
-    for line in lines[1:]:
-        if CHORD_FOOTER_RE.search(line):
-            break
+    for line in lines:
         m = CHORD_SECTION_RE.match(line)
         if m:
-            started = True
             name = m.group(1).title().replace("Prechorus", "Pre-Chorus")
             skipping = name.lower() in CHORD_NO_LYRIC_SECTIONS
-            if not skipping:
-                label = f"{name} {m.group(2)}".strip()
-                out += ["", f"[{label}]"]
+            current = None if skipping else (f"{name} {m.group(2)}".strip(), [])
+            if current:
+                parts.append(current)
             continue
-        # songwriter / key lines before the first section, chord lines, instrumental parts
-        if not started or skipping or is_chord_line(line):
+        # title / songwriter / key lines before the first section, chord lines, instrumentals
+        if current is None or is_chord_line(line):
             continue
         lyric = re.sub(r"\s+-\s+", "", line)          # "Fa - ther" -> "Father"
-        out.append(re.sub(r"\s+", " ", lyric).strip())
+        lyric = re.sub(r"\s+", " ", lyric).strip()
+        if lyric:
+            current[1].append(lyric)
+
+    out = []
+    for label, part_lines in parts:
+        if not part_lines:
+            continue
+        out.append(f"[{label}]")
+        for k, chunk in enumerate(_chunk_part(part_lines, CHORD_SHEET_LINES_PER_SLIDE)):
+            if k:
+                out.append("")
+            out.extend(chunk)
+        out.append("")
 
     lyrics = "\n".join(out).strip()
-    if not started or not lyrics:
+    if not lyrics:
         raise ValueError("No VERSE / CHORUS headings found. This layout isn't supported yet.")
-    return title, lyrics
+    return title or "Untitled song", lyrics
 
 
 # =========================================================
