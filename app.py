@@ -3281,6 +3281,11 @@ def render_docx_tab():
                     st.write(f"{row['docx_heading']} → {row.get('mapped_section_title') or 'no match'}")
 
 
+def natural_sort_key(uploaded_file):
+    name = getattr(uploaded_file, "name", str(uploaded_file)).lower()
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
+
+
 def render_pdf_tab():
     files = st.file_uploader(
         "Chord sheets (PDF)",
@@ -3300,7 +3305,8 @@ def render_pdf_tab():
         key="pdf_add",
     ):
         added, failed = [], []
-        for f in files:
+        # add in file-name order, numbers compared as numbers ("2_..." before "10_...")
+        for f in sorted(files, key=natural_sort_key):
             try:
                 title, lyrics = parse_chord_sheet_pdf(f.getvalue())
                 item = make_song_item("", title, lyrics, section_id)
