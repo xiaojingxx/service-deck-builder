@@ -132,7 +132,8 @@ DEFAULTS = {
     "song_selectbox_version": 0,
     "smart_split_enabled": False,
     "smart_split_max_chars": 30,
-    "smart_split_max_lines_per_slide": 4
+    "smart_split_max_lines_per_slide": 4,
+    "last_docx_import_report": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -210,6 +211,17 @@ def find_row_by_umh(umh_number: str):
     umh_number = str(umh_number).strip()
     for row in get_all_records_cached():
         if str(row.get("UMH Number", "")).strip() == umh_number:
+            return row
+    return None
+
+
+def find_row_by_title(title: str):
+    target = re.sub(r"\s+", " ", str(title or "")).strip().lower()
+    if not target:
+        return None
+    for row in get_all_records_cached():
+        row_title = re.sub(r"\s+", " ", str(row.get("Title", ""))).strip().lower()
+        if row_title == target:
             return row
     return None
 
@@ -867,7 +879,11 @@ def build_section_anchor_map(prs):
 
     for slide in prs.slides:
         if is_divider_slide(slide):
-            raw_title = get_divider_title(slide)
+            # same fallback naming as parse_template_sections(), so untitled
+            # dividers ("Section 1", "Section 2", ...) still match
+            raw_title = get_divider_title(
+                slide, fallback=f"Section {len(divider_entries) + 1}"
+            )
             norm_title = canonicalize_section_label(raw_title)
             divider_entries.append(
                 {
@@ -1473,7 +1489,8 @@ def apply_pending_setlist_load():
 # ORDER OF SERVICE DOCX IMPORT
 # =========================================================
 UMH_IMPORT_RE = re.compile(
-    r"^(?P<hymnal>UMH)\s*(?P<number>\d+)\.?\s+(?P<title>.+?)(?:\s*\((?P<stanzas>.+?)\))?\s*$",
+    # number is optional: "UMH 140 Title" or "UMH Title"
+    r"^(?P<hymnal>UMH)\s*(?P<number>\d+)?\.?\s+(?P<title>.+?)(?:\s*\((?P<stanzas>.+?)\))?\s*$",
     re.IGNORECASE,
 )
 
@@ -1543,6 +1560,10 @@ def simplify_heading_text(s: str) -> str:
     # Normalize symbols
     s = s.replace("&", " and ")
 
+    # "Section1" -> "section 1"
+    s = re.sub(r"([a-z])(\d)", r"\1 \2", s)
+    s = re.sub(r"(\d)([a-z])", r"\1 \2", s)
+
     # Remove punctuation
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
 
@@ -1569,12 +1590,16 @@ def canonicalize_section_label(label: str) -> str:
     return simplified
 
 def read_docx_lines(docx_file) -> list[str]:
+    """
+    One entry per line. Blank paragraphs are kept as "" (they separate verses),
+    and soft line breaks (Shift+Enter) inside a paragraph become separate lines.
+    """
     doc = Document(docx_file)
     lines = []
     for para in doc.paragraphs:
-        text = para.text.replace(" ", " ").strip()
-        if text:
-            lines.append(text)
+        text = para.text.replace("\xa0", " ").replace("\u000b", "\n")
+        for line in text.split("\n"):
+            lines.append(line.strip())
     return lines
 
 
@@ -1699,73 +1724,163 @@ def import_service_order_from_docx(docx_file, template_sections):
 
     current_block = pick_starting_block()
 
+    # A song line opens a "pending" song. Numbered songs ("UMH 140 Title") get their
+    # lyrics from Google Sheets. Un-numbered songs ("UMH Title") take the lyrics that
+    # follow in the DOCX, up to the next song line / section heading / end of file.
+    pending_song = None
+
+    def finish_pending_song():
+        nonlocal song_seq, pending_song
+        if pending_song is None:
+            return
+
+        parsed = pending_song["parsed"]
+        block = pending_song["block"]
+        inline_lyrics = "\n".join(pending_song["lines"]).strip()
+        pending_song = None
+
+        if inline_lyrics:
+            # lyrics come from the DOCX; borrow the UMH number from Sheets if the title matches
+            title_row = find_row_by_title(parsed["title"]) if not parsed["umh_number"] else None
+            umh_number = parsed["umh_number"] or (
+                str(title_row.get("UMH Number", "")).strip() if title_row else ""
+            )
+            title = parsed["title"]
+            lyrics = inline_lyrics
+        else:
+            row = (
+                find_row_by_umh(parsed["umh_number"])
+                if parsed["umh_number"]
+                else find_row_by_title(parsed["title"])
+            )
+            if not row:
+                missing_songs.append(parsed)
+                return
+            umh_number = str(row.get("UMH Number", "")).strip()
+            title = str(row.get("Title", "")).strip()
+            lyrics = str(row.get("Lyrics (Raw)", "")).strip()
+
+        imported_slides, imported_slide_parts = get_current_slides_and_parts(
+            lyrics,
+            smart_split=False,
+        )
+        if not imported_slides:
+            missing_songs.append(parsed)
+            return
+
+        song_seq += 1
+        song_id = f"song_{song_seq}"
+        song_store[song_id] = {
+            "song_id": song_id,
+            "umh_number": umh_number,
+            "title": title,
+            "slides": imported_slides,
+            "slide_parts": imported_slide_parts,
+            "lyrics_font_size_pt": None,
+            "line_spacing": None,
+            "override_lyrics_font_size": False,
+            "override_line_spacing": False,
+        }
+        if block is not None:
+            block["items"].append({"type": "song", "song_id": song_id})
+
+    awaiting_title = False  # set after a "#Title#" line; the next line is the song title
+
     for raw_line in lines:
         stripped = raw_line.strip()
+        collecting = pending_song is not None and pending_song["collect_lyrics"]
+
         if not stripped:
+            if collecting:
+                pending_song["lines"].append("")  # blank paragraph = slide break
+            continue
+
+        # "#Title#" starts a new song (same format as the song editor);
+        # the next line is its title and the lines after it are its lyrics
+        marker_label = parse_part_marker(stripped)
+        if marker_label is not None and marker_label.lower() in METADATA_PART_LABELS:
+            finish_pending_song()
+            awaiting_title = True
+            continue
+
+        if awaiting_title:
+            awaiting_title = False
+            if is_umh_song_line(stripped):
+                parsed = parse_umh_song_line(stripped)
+            else:
+                parsed = {"umh_number": "", "title": stripped, "stanzas": "", "raw": stripped}
+            pending_song = {
+                "parsed": parsed,
+                "lines": [],
+                "block": current_block,
+                "collect_lyrics": True,  # lyrics follow, even if the title has a UMH number
+            }
+            continue
+
+        # "#Verse 1#" part markers inside lyrics are lyrics, not "#" headings
+        if collecting and parse_part_marker(stripped) is not None:
+            pending_song["lines"].append(stripped)
             continue
 
         is_prefixed_heading = stripped.startswith(("+", "#"))
         heading_text = stripped[1:].strip() if is_prefixed_heading else stripped
-        
+
         # apply alias BEFORE matching
         aliased_heading = apply_docx_heading_alias(heading_text)
-        
+
         heading_match = match_template_section_from_heading(
             aliased_heading,
             template_sections,
         )
-        
+
+        # While reading lyrics, only an exact heading match ends the song,
+        # so lyric lines don't get mistaken for loosely-matching headings.
+        strong_match_types = {"exact"} if collecting else {"exact", "alias", "contains"}
+        matched_block = None
+        if heading_match and heading_match["match_type"] in strong_match_types:
+            matched_block = block_by_section_id.get(heading_match["section_id"])
+
+        is_song_line = is_umh_song_line(stripped)
+
+        if collecting and matched_block is None and not is_prefixed_heading and not is_song_line:
+            pending_song["lines"].append(stripped)
+            continue
+
+        finish_pending_song()
+
         # allow plain headings OR prefixed headings like "# Closing Hymn"
         # to switch sections if they strongly match
-        if heading_match and heading_match["match_type"] in {"exact", "alias", "contains"}:
-            matched_block = block_by_section_id.get(heading_match["section_id"])
-            if matched_block is not None:
-                current_block = matched_block
-                section_mapping_rows.append({
-                    "docx_heading": heading_text,
-                    "mapped_section_id": heading_match["section_id"],
-                    "mapped_section_title": heading_match["section_title"],
-                    "match_type": heading_match["match_type"],
-                    "score": heading_match["score"],
-                    "source": "prefixed" if is_prefixed_heading else "plain",
-                })
-                continue
+        if matched_block is not None:
+            current_block = matched_block
+            section_mapping_rows.append({
+                "docx_heading": heading_text,
+                "mapped_section_id": heading_match["section_id"],
+                "mapped_section_title": heading_match["section_title"],
+                "match_type": heading_match["match_type"],
+                "score": heading_match["score"],
+                "source": "prefixed" if is_prefixed_heading else "plain",
+            })
+            continue
 
         if is_prefixed_heading:
             if current_block is not None:
                 current_block["items"].append({"type": "minor_heading", "text": heading_text})
             continue
 
-        if is_umh_song_line(stripped):
+        if is_song_line:
             parsed = parse_umh_song_line(stripped)
-            row = find_row_by_umh(parsed["umh_number"])
-            if not row:
-                missing_songs.append(parsed)
-                continue
-
-            song_seq += 1
-            song_id = f"song_{song_seq}"
-            imported_slides, imported_slide_parts = get_current_slides_and_parts(
-                str(row.get("Lyrics (Raw)", "")).strip(),
-                smart_split=False,
-            )
-            song_store[song_id] = {
-                "song_id": song_id,
-                "umh_number": str(row.get("UMH Number", "")).strip(),
-                "title": str(row.get("Title", "")).strip(),
-                "slides": imported_slides,
-                "slide_parts": imported_slide_parts,
-                "lyrics_font_size_pt": None,
-                "line_spacing": None,
-                "override_lyrics_font_size": False,
-                "override_line_spacing": False,
+            pending_song = {
+                "parsed": parsed,
+                "lines": [],
+                "block": current_block,
+                "collect_lyrics": not parsed["umh_number"],
             }
-            if current_block is not None:
-                current_block["items"].append({"type": "song", "song_id": song_id})
             continue
 
         if current_block is not None:
             current_block["items"].append({"type": "text", "text": stripped})
+
+    finish_pending_song()
 
     return service_order_blocks, song_store, missing_songs, section_mapping_rows
 
@@ -2877,28 +2992,45 @@ with st.sidebar:
                     st.session_state["pending_setlist_load"] = None
                     st.session_state["setlist_selected_index"] = 0
         
-                    st.success(f"Imported {len(st.session_state['setlist'])} song(s) into the template-driven service order.")
-        
-                    if section_mapping_rows:
-                        st.caption("Section mapping:")
-                        for row in section_mapping_rows:
-                            mapped = row.get("mapped_section_title") or "No template section matched"
-                            st.write(
-                                f"{row['source']} {row['docx_heading']} → {mapped}"
-                                f" ({row['match_type']}, score {row['score']})"
-                            )
-        
-                    if missing_songs:
-                        st.warning(
-                            f"{len(missing_songs)} song(s) were found in the DOCX but not found in Google Sheets."
-                        )
-                        for song in missing_songs:
-                            st.write(f"- UMH {song['umh_number']} {song['title']}")
+                    st.session_state["last_docx_import_report"] = {
+                        "song_count": len(st.session_state["setlist"]),
+                        "mapping": section_mapping_rows,
+                        "missing": missing_songs,
+                    }
         
                     st.rerun()
         
                 except Exception as e:
                     st.exception(e)
+
+        import_report = st.session_state.get("last_docx_import_report")
+        if import_report:
+            if import_report["song_count"]:
+                st.success(f"Imported {import_report['song_count']} song(s) into the template-driven service order.")
+            else:
+                st.warning(
+                    "No songs were imported. Start each song with a \"#Title#\" line followed by "
+                    "the title and lyrics, or a line starting with \"UMH\", e.g. "
+                    "\"UMH 140 Great Is Thy Faithfulness\" (lyrics from Google Sheets) or "
+                    "\"UMH Great Is Thy Faithfulness\" followed by the lyrics in the DOCX."
+                )
+
+            if import_report["mapping"]:
+                st.caption("Section mapping:")
+                for row in import_report["mapping"]:
+                    mapped = row.get("mapped_section_title") or "No template section matched"
+                    st.write(
+                        f"{row['source']} {row['docx_heading']} → {mapped}"
+                        f" ({row['match_type']}, score {row['score']})"
+                    )
+
+            if import_report["missing"]:
+                st.warning(
+                    f"{len(import_report['missing'])} song(s) were found in the DOCX but have no "
+                    "lyrics in the DOCX and were not found in Google Sheets."
+                )
+                for song in import_report["missing"]:
+                    st.write(f"- {song['raw']}")
 
 
 # =========================================================
