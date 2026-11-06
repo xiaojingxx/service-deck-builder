@@ -15,8 +15,11 @@ import streamlit as st
 from streamlit_ace import st_ace
 from google.oauth2.service_account import Credentials
 from pptx import Presentation
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Pt
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
+from pptx.util import Pt, Emu
+from lxml import etree
 from PIL import Image
 from pptx_tools.creator import PPTXCreator
 from docx import Document
@@ -33,6 +36,20 @@ WORKSHEET_NAME = st.secrets["WORKSHEET_NAME"]
 FIRST_LAYOUT_NAME = "TEMPLATE_FIRST"
 REST_LAYOUT_NAME = "TEMPLATE_REST"
 DIVIDER_LAYOUT_NAME = "SECTION_DIVIDER"
+
+# Song-part footers (e.g. "Chorus" bottom-left, "Verse 1 | Verse 2 | Chorus" links bottom-right).
+# Add text placeholders with these names (Selection Pane) to TEMPLATE_FIRST / TEMPLATE_REST
+# in Slide Master to control their look. Without them, plain text boxes are used.
+PART_LABEL_PLACEHOLDER_NAME = "PART_LABEL"
+PART_NAV_PLACEHOLDER_NAME = "PART_NAV"
+PART_NAV_SEPARATOR = " | "
+PART_FOOTER_FONT_SIZE_PT = 14  # only used for the text-box fallback
+
+# Lyrics lines like "#Verse 1#" or "#Chorus#" start a new song part (and a new slide).
+PART_MARKER_RE = re.compile(r"^\s*#\s*([^#]*?)\s*#\s*$")
+# A bare "##" line ends the current part (following lines are unlabelled).
+# Parts whose content is metadata, not lyrics, so they never become slides.
+METADATA_PART_LABELS = {"title"}
 
 
 # =========================================================
@@ -238,18 +255,106 @@ def split_slides_by_line_count(text: str, lines_per_slide: int = 4) -> list[list
 
     return slides
 
-def get_current_slides(text: str) -> list[list[str]]:
+def parse_part_marker(line):
+    """Return the label for a '#Label#' line ('' for '##'), or None if not a marker."""
+    m = PART_MARKER_RE.match(str(line or ""))
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def split_text_into_parts(text: str) -> list[dict]:
+    """
+    Split lyrics on '#Label#' marker lines.
+    Returns [{"label": str | None, "text": str}, ...] in order, skipping
+    metadata parts (e.g. #Title#) and parts with no lyrics.
+    """
+    raw_parts = []
+    current = {"label": None, "lines": []}
+
+    for raw_line in str(text or "").splitlines():
+        label = parse_part_marker(raw_line)
+        if label is None:
+            current["lines"].append(raw_line)
+            continue
+        raw_parts.append(current)
+        current = {"label": label or None, "lines": []}
+    raw_parts.append(current)
+
+    parts = []
+    for part in raw_parts:
+        label = part["label"]
+        if label and label.lower() in METADATA_PART_LABELS:
+            continue
+        if all(is_effectively_blank(line) for line in part["lines"]):
+            continue
+        parts.append({"label": label, "text": "\n".join(part["lines"])})
+    return parts
+
+
+def default_slide_parts(slides):
+    return [{"label": None, "new_part": i == 0} for i in range(len(slides))]
+
+
+def normalize_slide_parts(slides, slide_parts):
+    if not slide_parts or len(slide_parts) != len(slides):
+        return default_slide_parts(slides)
+    return slide_parts
+
+
+def get_current_slides_and_parts(text: str, smart_split=None):
+    """
+    Returns (slides, slide_parts):
+      slides:      list[list[str]]
+      slide_parts: list[{"label": str | None, "new_part": bool}], one per slide.
+                   new_part is True on the first slide of each part occurrence.
+    Every part starts on a new slide; splitting happens within each part.
+    """
     # ALWAYS expand refrain first
     processed_text = expand_refrain_blocks(text)
 
-    if st.session_state.get("smart_split_enabled", False):
-        return split_slides_balanced(
-            processed_text,
-            max_chars=st.session_state.get("smart_split_max_chars", 30),
-            max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
-        )
+    if smart_split is None:
+        smart_split = st.session_state.get("smart_split_enabled", False)
 
-    return split_slides_manual(processed_text)
+    slides = []
+    slide_parts = []
+
+    for part in split_text_into_parts(processed_text):
+        if smart_split:
+            part_slides = split_slides_balanced(
+                part["text"],
+                max_chars=st.session_state.get("smart_split_max_chars", 30),
+                max_lines_per_slide=st.session_state.get("smart_split_max_lines_per_slide", 4),
+            )
+        else:
+            part_slides = split_slides_manual(part["text"])
+
+        for j, slide_lines in enumerate(part_slides):
+            slides.append(slide_lines)
+            slide_parts.append({"label": part["label"], "new_part": j == 0})
+
+    return slides, slide_parts
+
+
+def get_current_slides(text: str) -> list[list[str]]:
+    return get_current_slides_and_parts(text)[0]
+
+
+def song_slides_to_editor_text(slides, slide_parts=None) -> str:
+    """Rebuild editor text from stored slides, re-inserting '#Label#' markers."""
+    slide_parts = normalize_slide_parts(slides, slide_parts)
+    chunks = []
+    prev_label = None
+    for slide_lines, part in zip(slides, slide_parts):
+        body = "\n".join(slide_lines)
+        label = part.get("label")
+        if part.get("new_part") and label:
+            body = f"#{label}#\n{body}"
+        elif part.get("new_part") and prev_label:
+            body = f"##\n{body}"  # "##" ends the previous labelled part
+        prev_label = label
+        chunks.append(body)
+    return "\n\n".join(chunks)
 
 def open_presentation_from_bytes(template_bytes: bytes):
     return Presentation(BytesIO(template_bytes))
@@ -263,8 +368,28 @@ def get_layout_by_name(prs, layout_name):
     return None
 
 
+def find_layout_placeholder_idx(layout, name):
+    for ph in layout.placeholders:
+        if getattr(ph, "name", "").strip().upper() == name:
+            return ph.placeholder_format.idx
+    return None
+
+
+def get_part_footer_idxs(layout):
+    return {
+        "label": find_layout_placeholder_idx(layout, PART_LABEL_PLACEHOLDER_NAME),
+        "nav": find_layout_placeholder_idx(layout, PART_NAV_PLACEHOLDER_NAME),
+    }
+
+
 def get_body_placeholder(slide):
-    placeholders = list(slide.placeholders)
+    footer_idxs = {
+        idx for idx in get_part_footer_idxs(slide.slide_layout).values() if idx is not None
+    }
+    placeholders = [
+        ph for ph in slide.placeholders
+        if ph.placeholder_format.idx not in footer_idxs
+    ]
 
     for ph in placeholders:
         name = getattr(ph, "name", "").lower()
@@ -487,6 +612,7 @@ def expand_refrain_blocks(text: str) -> str:
         return str(line).replace("\xa0", " ").strip() == ""
 
     refrain_lines = None
+    refrain_label = "Refrain"
     output = []
     i = 0
 
@@ -495,6 +621,7 @@ def expand_refrain_blocks(text: str) -> str:
 
         # Detect "Refrain:" block
         if any(p.match(line) for p in refrain_start_patterns):
+            refrain_label = "Chorus" if "chorus" in line.lower() else "Refrain"
             i += 1
             block = []
 
@@ -504,7 +631,10 @@ def expand_refrain_blocks(text: str) -> str:
 
             if block:
                 refrain_lines = block
+                # label it as a song part, so it gets a footer
+                output.append(f"#{refrain_label}#")
                 output.extend(block)
+                output.append("##")  # end the refrain part; following lines are unlabelled
 
             # preserve spacing
             if i < len(lines) and is_blank(lines[i]):
@@ -515,7 +645,9 @@ def expand_refrain_blocks(text: str) -> str:
         # Replace "(Refrain)" later
         if any(p.match(line) for p in refrain_ref_patterns):
             if refrain_lines:
+                output.append(f"#{refrain_label}#")
                 output.extend(refrain_lines)
+                output.append("##")
             else:
                 output.append(line)
             i += 1
@@ -525,6 +657,179 @@ def expand_refrain_blocks(text: str) -> str:
         i += 1
 
     return "\n".join(output)
+
+
+# =========================================================
+# SONG PART FOOTER HELPERS
+# =========================================================
+def _part_key(label):
+    return str(label or "").strip().lower()
+
+
+def build_part_nav(slide_parts):
+    """
+    Returns (nav_labels, starts_by_key):
+      nav_labels:    display labels in nav order. Parts that occur once (verses) come first
+                     in song order; repeated parts (chorus/refrain) go last.
+      starts_by_key: key -> list of slide indices where each occurrence of that part starts.
+    """
+    starts_by_key = {}
+    display_by_key = {}
+    order = []
+
+    for i, part in enumerate(slide_parts):
+        label = part.get("label")
+        if not label or not part.get("new_part"):
+            continue
+        key = _part_key(label)
+        if key not in starts_by_key:
+            starts_by_key[key] = []
+            display_by_key[key] = label
+            order.append(key)
+        starts_by_key[key].append(i)
+
+    singles = [k for k in order if len(starts_by_key[k]) == 1]
+    repeats = [k for k in order if len(starts_by_key[k]) > 1]
+    nav_labels = [display_by_key[k] for k in singles + repeats]
+    return nav_labels, starts_by_key
+
+
+def get_current_part_start(slide_parts, slide_index):
+    for i in range(slide_index, -1, -1):
+        if slide_parts[i].get("new_part"):
+            return i
+    return 0
+
+
+def pick_part_link_target(starts, current_part_start):
+    """
+    Link to the next occurrence of the part at or after the current part
+    (so jumping to the Chorus from Verse 2 lands on the chorus after Verse 2),
+    else to the last occurrence.
+    """
+    for s in starts:
+        if s >= current_part_start:
+            return s
+    return starts[-1]
+
+
+def remove_shape(shape):
+    if shape is not None:
+        el = shape._element
+        el.getparent().remove(el)
+
+
+def get_slide_placeholder_by_idx(slide, idx):
+    if idx is None:
+        return None
+    for ph in slide.placeholders:
+        if ph.placeholder_format.idx == idx:
+            return ph
+    return None
+
+
+def add_fallback_footer_textbox(prs, slide, kind):
+    """Text box used when the layout has no PART_LABEL / PART_NAV placeholder."""
+    slide_w = prs.slide_width
+    slide_h = prs.slide_height
+    top = int(slide_h * 0.9066)          # 6217623 EMU on 16:9, same row as the slide number
+    height = int(slide_h * 0.0765)
+    margin = int(slide_w * 0.0341)        # 415600 EMU on 16:9
+
+    if kind == "label":
+        left, width, align = margin, int(slide_w * 0.39), PP_ALIGN.LEFT
+    else:
+        # stop short of the slide number in the bottom-right corner
+        right_edge = int(slide_w * 0.918)
+        width = int(slide_w * 0.48)
+        left, align = right_edge - width, PP_ALIGN.RIGHT
+
+    box = slide.shapes.add_textbox(Emu(left), Emu(top), Emu(width), Emu(height))
+    box.name = PART_LABEL_PLACEHOLDER_NAME if kind == "label" else PART_NAV_PLACEHOLDER_NAME
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.paragraphs[0].alignment = align
+    return box, True
+
+
+def get_footer_shape(prs, slide, kind):
+    idx = get_part_footer_idxs(slide.slide_layout)[kind]
+    ph = get_slide_placeholder_by_idx(slide, idx)
+    if ph is not None:
+        return ph, False
+    return add_fallback_footer_textbox(prs, slide, kind)
+
+
+def remove_footer_placeholders(slide):
+    for idx in get_part_footer_idxs(slide.slide_layout).values():
+        remove_shape(get_slide_placeholder_by_idx(slide, idx))
+
+
+def link_run_to_slide(run, source_slide, target_slide):
+    rId = source_slide.part.relate_to(target_slide.part, RT.SLIDE)
+    rPr = run._r.get_or_add_rPr()
+    hlink = etree.SubElement(rPr, qn("a:hlinkClick"))
+    hlink.set(qn("r:id"), rId)
+    hlink.set("action", "ppaction://hlinksldjump")
+
+
+def apply_song_part_footers(prs, song_slides, slide_parts):
+    """
+    song_slides: the pptx slide objects of ONE song, in order.
+    slide_parts: matching [{"label", "new_part"}] list.
+    """
+    slide_parts = normalize_slide_parts(song_slides, slide_parts)
+    nav_labels, starts_by_key = build_part_nav(slide_parts)
+
+    # Song has no part markers -> no footers at all
+    if not nav_labels:
+        for slide in song_slides:
+            remove_footer_placeholders(slide)
+        return
+
+    for i, (slide, part) in enumerate(zip(song_slides, slide_parts)):
+        current_key = _part_key(part.get("label"))
+        current_part_start = get_current_part_start(slide_parts, i)
+
+        # ---- left: current part label
+        label_shape, is_fallback = get_footer_shape(prs, slide, "label")
+        if part.get("label"):
+            tf = label_shape.text_frame
+            tf.clear()
+            run = tf.paragraphs[0].add_run()
+            run.text = part["label"]
+            if is_fallback:
+                tf.paragraphs[0].alignment = PP_ALIGN.LEFT
+                run.font.size = Pt(PART_FOOTER_FONT_SIZE_PT)
+        else:
+            remove_shape(label_shape)
+
+        # ---- right: links to the start of each part
+        nav_shape, is_fallback = get_footer_shape(prs, slide, "nav")
+        tf = nav_shape.text_frame
+        tf.clear()
+        p = tf.paragraphs[0]
+        if is_fallback:
+            p.alignment = PP_ALIGN.RIGHT
+
+        for n, label in enumerate(nav_labels):
+            if n > 0:
+                sep = p.add_run()
+                sep.text = PART_NAV_SEPARATOR
+                if is_fallback:
+                    sep.font.size = Pt(PART_FOOTER_FONT_SIZE_PT)
+
+            key = _part_key(label)
+            target_idx = pick_part_link_target(starts_by_key[key], current_part_start)
+
+            run = p.add_run()
+            run.text = label
+            if is_fallback:
+                run.font.size = Pt(PART_FOOTER_FONT_SIZE_PT)
+            if key == current_key:
+                run.font.bold = True  # highlight the part we're in
+            link_run_to_slide(run, slide, song_slides[target_idx])
 
 # =========================================================
 # MOVE HELPERS
@@ -701,17 +1006,33 @@ def validate_template_bytes(template_bytes: bytes):
     if rest_body_placeholder is None:
         errors.append(f"{REST_LAYOUT_NAME} is missing a body/lyrics placeholder")
 
+    for layout in (first_layout, rest_layout):
+        missing = [
+            name
+            for name, idx in (
+                (PART_LABEL_PLACEHOLDER_NAME, get_part_footer_idxs(layout)["label"]),
+                (PART_NAV_PLACEHOLDER_NAME, get_part_footer_idxs(layout)["nav"]),
+            )
+            if idx is None
+        ]
+        if missing:
+            warnings.append(
+                f"{layout.name.strip()} has no {' / '.join(missing)} placeholder; "
+                "song-part footers will use default text boxes."
+            )
+
     return len(errors) == 0, errors, warnings
 
 
 # =========================================================
 # SONG / SECTION HELPERS
 # =========================================================
-def build_editor_song_item(current_slides):
+def build_editor_song_item(current_slides, slide_parts=None):
     return {
         "umh_number": st.session_state["editor_umh"].strip(),
         "title": st.session_state["editor_title"].strip(),
         "slides": current_slides,
+        "slide_parts": normalize_slide_parts(current_slides, slide_parts),
         "lyrics_font_size_pt": (
             st.session_state["editor_lyrics_font_size_pt"]
             if st.session_state["editor_override_lyrics_font_size"]
@@ -733,6 +1054,10 @@ def build_current_song_signature(song_item, selected_template_name):
         song_item["umh_number"],
         song_item["title"],
         tuple(tuple(slide) for slide in song_item["slides"]),
+        tuple(
+            (p.get("label"), p.get("new_part"))
+            for p in normalize_slide_parts(song_item["slides"], song_item.get("slide_parts"))
+        ),
         song_item.get("lyrics_font_size_pt"),
         song_item.get("line_spacing"),
         song_item.get("section_id"),
@@ -858,6 +1183,7 @@ def flatten_blocks_to_setlist(service_order_blocks, song_store):
                 "umh_number": song.get("umh_number", ""),
                 "title": song.get("title", ""),
                 "slides": song.get("slides", []),
+                "slide_parts": song.get("slide_parts"),
                 "lyrics_font_size_pt": song.get("lyrics_font_size_pt"),
                 "line_spacing": song.get("line_spacing"),
                 "override_lyrics_font_size": song.get("override_lyrics_font_size", False),
@@ -911,6 +1237,7 @@ def sync_block_model_from_setlist():
             "umh_number": song.get("umh_number", ""),
             "title": song.get("title", ""),
             "slides": song.get("slides", []),
+            "slide_parts": song.get("slide_parts"),
             "lyrics_font_size_pt": song.get("lyrics_font_size_pt"),
             "line_spacing": song.get("line_spacing"),
             "override_lyrics_font_size": song.get("override_lyrics_font_size", False),
@@ -1033,9 +1360,11 @@ def load_song_preview_if_possible():
             template_ok, _, _ = validate_template_bytes(template_bytes)
 
             if template_ok:
-                current_slides = get_current_slides(st.session_state["editor_text"])
+                current_slides, current_slide_parts = get_current_slides_and_parts(
+                    st.session_state["editor_text"]
+                )
                 if current_slides:
-                    song_item = build_editor_song_item(current_slides)
+                    song_item = build_editor_song_item(current_slides, current_slide_parts)
                     refresh_current_song_preview(song_item, template_bytes)
                     st.session_state["current_preview_slide"] = 1
                     st.session_state["preview_mode"] = "song"
@@ -1097,7 +1426,7 @@ def apply_pending_setlist_load():
         return
 
     item = st.session_state["setlist"][idx]
-    lyrics_text = "\n\n".join("\n".join(slide) for slide in item["slides"])
+    lyrics_text = song_slides_to_editor_text(item["slides"], item.get("slide_parts"))
 
     st.session_state["loaded_song"] = {
         "umh_number": item["umh_number"],
@@ -1416,11 +1745,16 @@ def import_service_order_from_docx(docx_file, template_sections):
 
             song_seq += 1
             song_id = f"song_{song_seq}"
+            imported_slides, imported_slide_parts = get_current_slides_and_parts(
+                str(row.get("Lyrics (Raw)", "")).strip(),
+                smart_split=False,
+            )
             song_store[song_id] = {
                 "song_id": song_id,
                 "umh_number": str(row.get("UMH Number", "")).strip(),
                 "title": str(row.get("Title", "")).strip(),
-                "slides": split_slides_manual(str(row.get("Lyrics (Raw)", "")).strip()),
+                "slides": imported_slides,
+                "slide_parts": imported_slide_parts,
                 "lyrics_font_size_pt": None,
                 "line_spacing": None,
                 "override_lyrics_font_size": False,
@@ -1451,6 +1785,8 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
 
     full_title = f"UMH {umh_number} {title}".strip() if umh_number else title
 
+    song_slide_objs = []
+
     for i, slide_lines in enumerate(slides):
         lyrics_text = "\n".join(slide_lines)
 
@@ -1471,6 +1807,11 @@ def add_song_block_to_prs(prs, song, first_layout, rest_layout):
                 font_size_pt=lyrics_font_size_pt,
                 line_spacing=line_spacing,
             )
+
+        song_slide_objs.append(slide)
+
+    # Footers go on after all of the song's slides exist, so links have targets
+    apply_song_part_footers(prs, song_slide_objs, song.get("slide_parts"))
 
     end_idx = len(prs.slides) - 1
     return start_idx, end_idx
@@ -1951,9 +2292,21 @@ def get_slide_number_from_line_index(text: str, line_index: int, auto_split: boo
 
     slide_num = 1
     in_slide = False
+    in_metadata_part = False
 
     for idx, raw_line in enumerate(lines):
         stripped = raw_line.strip()
+
+        # "#Verse 1#" lines start a new slide and aren't lyrics themselves
+        marker_label = parse_part_marker(raw_line)
+        if marker_label is not None:
+            if in_slide:
+                slide_num += 1
+                in_slide = False
+            in_metadata_part = marker_label.lower() in METADATA_PART_LABELS
+            continue
+        if in_metadata_part:
+            continue
 
         if stripped == "":
             if in_slide:
@@ -2632,8 +2985,8 @@ with main_left:
     if editor_text != old_text:
         clear_service_outputs()
 
-    current_slides = get_current_slides(editor_text)
-    song_item = build_editor_song_item(current_slides)
+    current_slides, current_slide_parts = get_current_slides_and_parts(editor_text)
+    song_item = build_editor_song_item(current_slides, current_slide_parts)
 
     if st.session_state.get("smart_split_enabled", False):
         st.caption(
@@ -2643,6 +2996,12 @@ with main_left:
         )
     else:
         st.caption(f"{len(current_slides)} slide(s) (manual mode: blank lines separate slides)")
+
+    detected_part_labels, _ = build_part_nav(current_slide_parts)
+    if detected_part_labels:
+        st.caption("Song parts (footer links): " + PART_NAV_SEPARATOR.join(detected_part_labels))
+    else:
+        st.caption("No song parts detected. Add lines like #Verse 1# or #Chorus# to label slides.")
 
     if refresh_song_preview_clicked:
         if selected_template_bytes is None:
@@ -2750,7 +3109,7 @@ with main_left:
         if not current_slides:
             st.error("No slides to add.")
         else:
-            item = build_editor_song_item(current_slides)
+            item = build_editor_song_item(current_slides, current_slide_parts)
             edit_idx = st.session_state.get("editing_setlist_index")
 
             if edit_idx is None:
