@@ -2580,6 +2580,7 @@ FLOW_DEFAULTS = {
     "bundled_template_names": [],
     "bundled_templates_loaded": False,
     "add_method": "docx",
+    "deck_file_name": None,
 }
 for key, value in FLOW_DEFAULTS.items():
     if key not in st.session_state:
@@ -3608,6 +3609,43 @@ def render_check_step(template_bytes, template_ok):
 # =========================================================
 # STEP 4: DOWNLOAD
 # =========================================================
+def clean_file_name(name):
+    """Remove characters Windows/Mac don't allow in file names and add .pptx."""
+    name = re.sub(r'[\\/:*?"<>|]+', " ", str(name or "")).strip().strip(".")
+    name = re.sub(r"\s+", " ", name)
+    if name.lower().endswith(".pptx"):
+        name = name[:-5].rstrip()
+    return f"{name or DECK_FILE_PREFIX}.pptx"
+
+
+def deck_file_name_input(service_date):
+    """
+    File name box. Follows the service date until the user types their own name;
+    clearing the box goes back to the automatic name.
+    """
+    ss = st.session_state
+    auto_name = f"{DECK_FILE_PREFIX} {service_date:%Y-%m-%d}"
+    widget_key = "_w_deck_file_name"
+    if not ss.get("deck_file_name"):
+        ss[widget_key] = auto_name
+    elif widget_key not in ss:
+        ss[widget_key] = ss["deck_file_name"]
+
+    def _keep():
+        typed = ss[widget_key].strip()
+        ss["deck_file_name"] = typed if typed and typed != auto_name else None
+
+    typed = st.text_input(
+        "File name",
+        key=widget_key,
+        on_change=_keep,
+        help="\".pptx\" is added for you. Clear the box to go back to the automatic name.",
+    )
+    file_name = clean_file_name(typed)
+    st.caption(f"Saves as: {file_name}")
+    return file_name
+
+
 def render_download_step(template_bytes, template_ok):
     st.subheader("4. Download")
     st.caption("Save the deck, then open it in PowerPoint.")
@@ -3632,10 +3670,9 @@ def render_download_step(template_bytes, template_ok):
 
     ppt_bytes = st.session_state["ppt_data"].getvalue()
     slide_count = len(Presentation(BytesIO(ppt_bytes)).slides)
-    file_name = f"{DECK_FILE_PREFIX} {service_date:%Y-%m-%d}.pptx"
+    file_name = deck_file_name_input(service_date)
 
     with st.container(border=True):
-        st.markdown(f"**{file_name}**")
         st.caption(
             f"{len(st.session_state.get('template_sections', []))} sections · "
             f"{len(setlist)} songs · {slide_count} slides"
